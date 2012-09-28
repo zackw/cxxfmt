@@ -20,9 +20,9 @@ facilities of the language, because it's:
 
 This library depends on four C++2011 features: [variadic templates][],
 [rvalue references][], [`<type_traits>`][typetraits], and
-[`static_assert`][sassert].  You also need a `sprintf` that knows how
-to print 64-bit integers (we detect C99 compliance and Windows), and
-C++98 `<string>`.
+`static_assert`.  You also need a `sprintf` that knows how to print
+64-bit integers (we detect C99 compliance and Windows), and C++98
+`<string>`.
 
 If you want to run the test suite, you need Python 2.7 and either GCC
 or Clang.  (Patches to teach the test suite how to invoke MSVC++ are
@@ -109,6 +109,5 @@ encourage their use.
 [p3fmt]: http://docs.python.org/py3k/library/string.html#format-string-syntax
 [FastFormat]: http://fastformat.org/
 [variadic templates]: https://en.wikipedia.org/wiki/Variadic_template#C.2B.2B11
-[rvalue references]:
+[rvalue references]: http://thbecker.net/articles/rvalue_references/section_01.html
 [typetraits]: http://www.cplusplus.com/reference/std/type_traits/
-[sassert]: 
