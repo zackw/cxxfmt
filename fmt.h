@@ -35,82 +35,8 @@ static_assert(sizeof(int64) >= sizeof(ptrdiff_t),
 static_assert(sizeof(uint64) >= sizeof(size_t),
               "size_t is too large for uint64");
 
-union datum
-{
-  const void* vp;
-  const char* cs;
-  const std::string* xs;
-  int64 si;
-  uint64 ui;
-  double fp;
-};
-
-struct format_data
-{
-  char*  types;
-  datum* data;
-  size_t n;
-
-  format_data(char* t, datum* d, size_t n) : types(t), data(d), n(n) {}
-
-  std::string format() const;
-};
-
-//
-// Work out what should be done with one argument to the formatter.
-//
-
-#define PROCESS_ARG_CVT(CODE, SLOT, TYPE, CONV)         \
-  inline void                                           \
-  process_arg(format_data& f, size_t n, TYPE t)         \
-  {                                                     \
-    f.types[n] = CODE;                                  \
-    f.data[n].SLOT = CONV(t);                           \
-  }
-
-#define PROCESS_ARG_CND(CODE, SLOT, COND, CONV)         \
-  template <typename T,                                 \
-            typename = std::enable_if<COND>::type>      \
-  PROCESS_ARG_CVT(CODE, SLOT, T, CONV)
-
-#define PROCESS_ARG(CODE, SLOT, TYPE)                   \
-  PROCESS_ARG_CVT(CODE, SLOT, TYPE, /**/)
-
-#define PROCESS_ARG_INT(CODE, TYPE)                     \
-  PROCESS_ARG(CODE, si, signed TYPE)                    \
-  PROCESS_ARG(CODE, ui, unsigned TYPE)
-
-PROCESS_ARG_INT('c', char)
-PROCESS_ARG_INT('i', short)
-PROCESS_ARG_INT('i', int)
-PROCESS_ARG_INT('i', long)
-#if defined ULLONG_MAX && ULLONG_MAX > ULONG_MAX
-PROCESS_ARG_INT('i', long long)
-#elif defined _UI64_MAX && _UI64_MAX > ULONG_MAX
-PROCESS_ARG_INT('i', __int64)
-#endif
-
-PROCESS_ARG('f', fp, float)
-PROCESS_ARG('f', fp, double)
-PROCESS_ARG('p', vp, const void *)
-
-// Strings and things which are convertible to strings
-
-PROCESS_ARG('s', cs, const char *)
-PROCESS_ARG_CVT('S', xs, const ::std::string &&, &)
-
-#if 0
-PROCESS_ARG_CND('s', cs,
-                (std::is_constructible<const char *, T>::value),
-                (const char *))
-
-PROCESS_ARG_CND('S', xs,
-                (std::is_constructible<std::string, T>::value),
-                & std::string)
-
-// Explicit to-string methods
-
-#define HAS_MEM_FUNC(func)                                              \
+// Detection of class methods.
+#define CXXFMT_HAS_MEM_FUNC(func)                                       \
   template<typename T, typename Sign>                                   \
   struct has_##func {                                                   \
     typedef char yes[1];                                                \
@@ -121,48 +47,105 @@ PROCESS_ARG_CND('S', xs,
     static bool const value = sizeof(chk<T>(0)) == sizeof(yes);         \
   }
 
-HAS_MEM_FUNC(str);
-HAS_MEM_FUNC(c_str);
+CXXFMT_HAS_MEM_FUNC(str);
+CXXFMT_HAS_MEM_FUNC(c_str);
 
-#undef HAS_MEM_FUNC
+#undef CXXFMT_HAS_MEM_FUNC
 
-#define INVOKE_STR(x)   ((x).str())
-#define INVOKE_C_STR(x) ((x).c_str())
-
-PROCESS_ARG_CND('s', cs,
-                (has_c_str<T, const char * (T::*)() const>),
-                INVOKE_C_STR)
-PROCESS_ARG_CND('s', cs,
-                (has_str<T, const char * (T::*)() const>),
-                INVOKE_STR)
-PROCESS_ARG_CND('S', xs,
-                (has_str<T, std::string (T::*)() const>),
-                & INVOKE_STR)
-
-#undef INVOKE_STR
-#undef INVOKE_C_STR
-#endif
-
-#undef PROCESS_ARG_INT
-#undef PROCESS_ARG
-#undef PROCESS_ARG_CVT
-#undef PROCESS_ARG_CND
-
-//
-// Recursive template processes each arg in turn.
-//
-
-inline void
-process_args(format_data&, ::size_t)
+class Formatter
 {
-}
+  size_t nargs;
+  const char *msg;
+  std::string *specs;
+  std::string *subs;
 
-template <typename X, typename... XS> inline void
-process_args(format_data& f, ::size_t n, X&& x, XS&&... xs)
-{
-  process_arg(f, n, x);
-  process_args(f, n+1, xs...);
-}
+public:
+  Formatter(size_t nargs,
+            const char *msg,
+            std::string *specs,
+            std::string *subs);
+  ~Formatter() {}
+
+  std::string finish();
+
+  // Recursive template to prepare a whole argpack of substitutions.
+  void format_subs(size_t) {}
+
+  template <typename X, typename... XS> void
+  format_subs(size_t n, X&& x, XS&&... xs)
+  {
+    format_sub(n, x);
+    format_subs(n+1, xs...);
+  }
+
+  // Base format categories.  These methods do the actual work of
+  // rendering each substitution.
+  void format_sub(size_t, char);
+  void format_sub(size_t, uint64);
+  void format_sub(size_t, int64);
+  void format_sub(size_t, double);
+  void format_sub(size_t, const char *);
+  void format_sub(size_t, const void *);
+  void format_sub(size_t, const std::string &);
+
+  // Adapter templates pick the appropriate base category for every
+  // possible argument.
+
+  // Unsigned integral, not a char, smaller than 'uint64'.
+  template <typename T>
+  void format_sub(size_t n, T t,
+                  typename std::enable_if<
+                    (std::is_unsigned<T>::value
+                     && !std::is_same<T, unsigned char>::value
+                     && sizeof(T) < sizeof(uint64))>::type* = 0)
+  { format_sub(n, uint64(t)); }
+
+  // Signed integral, not a char, smaller than 'int64'.
+  template <typename T>
+  void format_sub(size_t n, T t,
+                  typename std::enable_if<
+                    (std::is_signed<T>::value
+                     && !std::is_floating_point<T>::value
+                     && !std::is_same<T, signed char>::value
+                     && sizeof(T) < sizeof(int64))>::type* = 0)
+  { format_sub(n, int64(t)); }
+
+  // Floating point.  We only go up to 'double', which makes this
+  // perhaps a little *too* generic, but what the heck.
+  template <typename T>
+  void format_sub(size_t n, T t,
+                  typename std::enable_if<
+                    (std::is_floating_point<T>::value
+                     && sizeof(T) < sizeof(double))>::type* = 0)
+  { format_sub(n, double(t)); }
+
+  // Things which are convertible to strings, either by construction
+  // or by member methods.
+  template <typename T>
+  void format_sub(size_t n, const T& t,
+                  typename std::enable_if<
+                    std::is_constructible<std::string, T>::value
+                  >::type* = 0)
+  { format_sub(n, std::string(t)); }
+
+  template <typename T>
+  void format_sub(size_t n, const T& t,
+                  typename std::enable_if<(
+                    has_str<T, const char *(T::*)() const>::value ||
+                    has_str<T, std::string (T::*)() const>::value ||
+                    has_str<T,const std::string&(T::*)()const>::value
+                  )>::type* = 0)
+  { format_sub(n, t.str()); }
+
+  template <typename T>
+  void format_sub(size_t n, const T& t,
+                  typename std::enable_if<(
+                    has_c_str<T, const char *(T::*)() const>::value ||
+                    has_c_str<T, std::string (T::*)() const>::value ||
+                    has_c_str<T,const std::string&(T::*)()const>::value
+                  )>::type* = 0)
+  { format_sub(n, t.c_str()); }
+};
 
 
 } // namespace fmt::detail
@@ -174,12 +157,12 @@ process_args(format_data& f, ::size_t n, X&& x, XS&&... xs)
 template <typename... XS> inline std::string
 format(const char *msg, XS&&... xs)
 {
-  char  types[sizeof...(xs)];
-  detail::datum data[sizeof...(xs)];
-  detail::format_data fd(types, data, sizeof...(xs));
-
-  detail::process_args(fd, 0, xs...);
-  return fd.format();
+  size_t nargs = sizeof...(xs);
+  std::string specs[nargs];
+  std::string subs[nargs];
+  detail::Formatter state(nargs, msg, specs, subs);
+  state.format_subs(0, xs...);
+  return state.finish();
 }
 
 } // namespace fmt
