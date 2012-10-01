@@ -36,16 +36,19 @@ welcome.)
     std::cout << fmt::format("I have {} teapots\n", 23);
 
 The `format` function returns a `std::string`.  The
-[syntax of format strings][p3fmt] is copied precisely from Python 3,
-with the following lacunae:
+[syntax of format strings][p3fmt] is copied from Python 3, with the
+following lacunae:
 
-1. Everything after a colon is currently passed verbatim to `sprintf`
-   (except that the type code is validated, and if a `*` appears it is
-   an error).  Consequently, expect `sprintf` behavior rather than
-   Pythonic behavior where the two diverge.
+1. The format specifier syntax (everything after the colon in
+   `{x:spec}` is that of `sprintf`, *not* that of Python; most
+   importantly, this affects the way you ask for left-justified fields
+   (`{:-12}` rather than `{x:<12}`).  **This will change in the
+   future.**
 2. Nested replacement fields are not supported.
 3. Named replacement fields are not supported, nor are attribute or
-   index extractions.
+   index extractions.  
+   However, as a special case, writing `{m}` or `{m:spec}` will cause
+   the library to substitute `strerror(errno)` at that point.
 4. The `!r`, `!s`, and `!a` modifiers are not supported.
 
 All built-in types may be passed as extended arguments to `fmt`, as
@@ -56,13 +59,37 @@ may `std::string` and any type that exposes any of the following:
   * `std::string str() const`
   * `const char *str() const`
   * `const char *c_str() const`
+  * `const char *what() const` (this last allows passing
+    `std::exception` objects directly to a format call).
 
-## Type Mismatch Handling
+## Exceptions
 
-It is unfortunately not possible to make type mismatch a compile-time
-error, since it depends on the contents of the format string.
-However, the library guarantees to detect and safely handle type
-mismatch at runtime, as follows:
+`fmt::format` itself guarantees not to throw exceptions under any
+circumstances whatsoever.  However, function calls within the argument
+list (including implicitly generated calls to `str`, `c_str`, `what`,
+and conversion operators) may still throw.
+
+If an exception occurs within `format`, it will be trapped, and a
+placeholder (`[exception]`, surrounded by VT-220 reverse video
+escapes) will replace either the substitution that failed, or the
+entire string.  If even that can't be made to work (for instance, if
+memory allocation fails during construction of the placeholder
+string), `format` will call `std::terminate`.
+
+## Parameter Mismatch Handling
+
+It is unfortunately not possible to make mismatches between the format
+string and the substitution arguments a compile-time error, since we
+would have to inspect the contents of the format string to do so.
+However, the library guarantees to detect and safely handle mismatches
+at runtime, as follows:
+
+* If there are more arguments than required by the format string, the
+  excess arguments are ignored.
+
+* If there are fewer arguments than required, the substitution markers
+  that don't correspond to arguments will produce the placeholder
+  string `[missing]`, surrounded by VT-220 reverse video escapes.
 
 * If you don't specify a type code, it will be derived from the actual
   type of the datum.  Doing this is encouraged whenever you don't need
@@ -77,9 +104,9 @@ mismatch at runtime, as follows:
   pointer will print the integer corresponding to its bit
   representation.
 
-* Any other mismatch will cause the type code to be ignored, but the
-  library will emit VT-100 reverse video escape sequences around the
-  mismatched datum, so you notice the problem.
+* Any other mismatch will cause the mismatched datum to be printed as
+  if there had been no type code, but surrounded by VT-220 reverse
+  video escapes.
 
 ## Future directions
 
