@@ -44,10 +44,16 @@ CXXFMT_HAS_MEM_FUNC(what);
 
 struct format_spec
 {
-  size_t arg_index;       // 1-based argument index
-  size_t next_this_index; // 1-based index in the 'specs' array of the
-                          // next spec that uses the same argument index,
-                          // if any; 0 otherwise.
+  // Special arg_index values.
+  static const size_t i_invalid = -1;  // This format_spec is invalid.
+  static const size_t i_errno   = -2;  // This format_spec applies to strerror(errno).
+
+  size_t arg_index;       // Argument index.
+  size_t next_this_index; // Index in the 'specs' array of the next spec
+                          // that uses the same argument index, if any;
+                          // i_invalid otherwise.
+  size_t target;          // Index in the 'segments' array where the
+                          // formatted string should be placed.
 
   unsigned int width;
   unsigned int precision;
@@ -59,13 +65,30 @@ struct format_spec
   bool flag_minus : 1;
   bool flag_plus  : 1;
   bool flag_space : 1;
+
+  format_spec()
+    : arg_index(i_invalid), next_this_index(i_invalid), target(i_invalid),
+      width(0), precision(0), type('\0'), had_width(false), had_prec(false),
+      flag_hash(false), flag_zero(false), flag_minus(false), flag_plus(false),
+      flag_space(false)
+  {}
+
+  void reset() { *this = format_spec(); }
 };
 
 class formatter
 {
   size_t nargs;
-  std::vector<std::string> segments;
+  std::vector<std::string> segs;
   std::vector<format_spec> specs;
+  format_spec first_errno_spec;
+
+  // Internal subroutines.
+  void parse_format_string(const char *str);
+
+  void constructor_threw(const char *what) noexcept;
+  void formatsub_threw(const char *what, size_t target) noexcept;
+  std::string finish_threw(const char *what) noexcept;
 
   // Base format categories.  These methods do the actual work of
   // rendering each substitution.
@@ -164,7 +187,6 @@ class formatter
 
 public:
   formatter(size_t nargs, const char *msg) noexcept;
-  ~formatter() noexcept;
 
   std::string finish() noexcept;
 

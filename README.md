@@ -19,10 +19,9 @@ facilities of the language, because it's:
 ## Dependencies
 
 This library depends on four C++2011 features: [variadic templates][],
-[rvalue references][], [`<type_traits>`][typetraits], and
-`static_assert`.  You also need a `sprintf` that knows how to print
-64-bit integers (we detect C99 compliance and Windows), and C++98
-`<string>`.
+[rvalue references][], [`<type_traits>`][typetraits], and `static_assert`.
+You also need a C99-compliant `snprintf` (in particular, one that
+understands `"%lld"`).
 
 If you want to run the test suite, you need Python 2.7 and either GCC
 or Clang.  (Patches to teach the test suite how to invoke MSVC++ are
