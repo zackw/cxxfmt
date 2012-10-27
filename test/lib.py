@@ -1,5 +1,27 @@
+# Test utility library.
+
+import glob
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+try:
+    __readlink = os.readlink
+    def _readlink(path):
+        try:
+            target = __readlink(path)
+            if target.startswith('/'): return target
+            return os.path.normpath(os.path.join(os.path.dirname(path), target))
+        except OSError:
+            return path
+except AttributeError:
+    def _readlink(path):
+        return path
+
 #
-# test utility routines
+# Test case generation utilities
 #
 
 class TestBlock(object):
@@ -73,3 +95,92 @@ def generate_mod(outf, name, casetype, contents):
     g = TestGenerator()
     g.add_module(name, casetype, contents)
     g.generate(outf)
+
+#
+# Compiler detection and invocation
+#
+
+class Compiler(object):
+    devnull = None
+
+    def __init__(self, argv):
+        self.argv = argv
+        self.otag = re.sub("[^A-Za-z0-9-]", "-", argv[0])
+        if os.name == "nt" or os.name == "ce":
+            self.otag += ".obj"
+        else:
+            self.otag += ".o"
+
+    def objname(self, src):
+        return os.path.splitext(src)[0] + self.otag
+
+    # verbose=0: total silence.
+    # verbose=1: report success or failure.
+    # verbose=2: report invocation and error messages.
+    def invoke(self, args, label, verbose):
+        if verbose < 0 or verbose > 2:
+            raise ValueError("bad verbosity {}".format(verbose))
+
+        if Compiler.devnull is None:
+            Compiler.devnull = open(os.devnull, "r+")
+
+        argv = self.argv + args
+        if verbose == 2:
+            sys.stderr.write(" ".join(argv) + "\n")
+            rv = subprocess.call(argv, stdin=Compiler.devnull)
+        else:
+            rv = subprocess.call(argv,
+                                 stdin=Compiler.devnull,
+                                 stdout=Compiler.devnull,
+                                 stderr=Compiler.devnull)
+        if rv == 0:
+            return True
+        if verbose == 0:
+            return False
+
+        if rv < 0:
+            sys.stderr.write("{} {}: signal {}\n".format(argv[0], label, -rv))
+        else:
+            sys.stderr.write("{} {}: exit {}\n".format(argv[0], label, rv))
+        return False
+
+    def compile(self, src, obj, verbose=0):
+        return self.invoke(["-c", "-o", obj, src], src, verbose)
+
+    def link(self, objs, exe, verbose=0):
+        return self.invoke(["-o", exe] + objs, exe, verbose)
+
+    def probe(self):
+        return self.compile("fmt.cc", self.objname("fmt.cc"))
+
+    @staticmethod
+    def find_compilers():
+        executables = set()
+        path = os.getenv('PATH')
+        if path is not None:
+            pathv = path.split(os.pathsep)
+        else:
+            pathv = ["/usr/local/bin", "/usr/bin", "/bin"]
+
+        for cmd in ["g++", "clang++"]:
+            for path in pathv:
+                for ver in glob.iglob(os.path.join(path, cmd) + "*"):
+                    executables.add(_readlink(ver))
+
+        compilers = []
+        for ex in executables:
+            for extra_args in [ ["-g", "-O2", "-I."],
+                                ["-g", "-O2", "-I.", "-std=c++11"],
+                                ["-g", "-O2", "-I.", "-std=c++0x"] ]:
+                c = Compiler([ex] + extra_args)
+                if c.probe():
+                    compilers.append(c)
+                    break # don't bother with the other possible extra args
+
+        return compilers
+
+if __name__ == '__main__':
+    compilers = Compiler.find_compilers()
+    for c in compilers:
+        print " ".join(c.argv)
+
