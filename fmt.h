@@ -46,7 +46,8 @@ struct format_spec
 {
   // Special arg_index values.
   static const size_t i_invalid = -1;  // This format_spec is invalid.
-  static const size_t i_errno   = -2;  // This format_spec applies to strerror(errno).
+  static const size_t i_errno   = -2;  // This format_spec applies to
+                                       //   strerror(errno).
 
   size_t arg_index;       // Argument index.
   size_t next_this_index; // Index in the 'specs' array of the next spec
@@ -58,19 +59,17 @@ struct format_spec
   unsigned int width;
   unsigned int precision;
   char type;
-  bool had_width  : 1;
-  bool had_prec   : 1;
-  bool flag_hash  : 1;
-  bool flag_zero  : 1;
-  bool flag_minus : 1;
-  bool flag_plus  : 1;
-  bool flag_space : 1;
+  char align;
+  char fill;
+  char sign;
+  bool has_width : 1;
+  bool has_precision : 1;
+  bool alternate_form : 1;
 
   format_spec()
     : arg_index(i_invalid), next_this_index(i_invalid), target(i_invalid),
-      width(0), precision(0), type('\0'), had_width(false), had_prec(false),
-      flag_hash(false), flag_zero(false), flag_minus(false), flag_plus(false),
-      flag_space(false)
+      width(0), precision(0), type('\0'), align('\0'), fill(' '), sign('-'),
+      has_width(false), has_precision(false), alternate_form(false)
   {}
 
   void reset() { *this = format_spec(); }

@@ -8,15 +8,16 @@
 #include <exception>
 #include <numeric>
 #include <limits>
+#include <sstream>
 
 #include <assert.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
+#include <errno.h>   // errno
+#include <stdlib.h>  // strtoul
+#include <string.h>  // strerror
 
 using std::numeric_limits;
 using std::string;
+using std::ostringstream;
 using std::vector;
 
 namespace fmt {
@@ -50,6 +51,27 @@ static_assert(sizeof(ptrdiff_t) <= sizeof(long long),
               "'long long' is not big enough for 'ptrdiff_t'");
 
 } // namespace detail
+
+// There is a template below that gets an unwanted "comparison is
+// always true" warning when instantiated with an unsigned type (it is
+// also instantiated with signed types, and then the comparison is
+// necessary).  The necessary incantations to suppress this are
+// slightly different for GCC and Clang, and we can't just put both,
+// because then each will complain about the other's construct.
+// Furrfu.
+#if defined __clang__
+# define PUSH_WARNINGS_SUPPRESS_TAUTOLOGICAL_COMPARE \
+    _Pragma("GCC diagnostic push"); \
+    _Pragma("GCC diagnostic ignored \"-Wtautological-compare\"")
+# define POP_WARNINGS \
+    _Pragma("GCC diagnostic pop")
+#elif defined __GNUC__
+# define PUSH_WARNINGS_SUPPRESS_TAUTOLOGICAL_COMPARE \
+    _Pragma("GCC diagnostic push"); \
+    _Pragma("GCC diagnostic ignored \"-Wtype-limits\"")
+# define POP_WARNINGS \
+    _Pragma("GCC diagnostic pop")
+#endif
 
 // Error conditions in the formatter are, in general, reported by
 // emitting some sort of placeholder, surrounded by VT-220 reverse
@@ -111,18 +133,20 @@ formatter::finish_threw(const char *what) noexcept
 // Parse a substitution.
 // The simplified grammar we accept is
 //
-// sub:   '{' [ index ] [ ':' spec ] '}'
-// spec:  [ flags ] [ width ] [ '.' precision ] [ type ]
-// flags: [ '#' ] [ '0' ] [ '-' ] [ '+' ] [ ' ' ]  # in any order
+// sub:   '{' [ index | 'm' ] [ ':' spec ] '}'
+// spec:  [ mods ] [ width ] [ '.' precision ] [ type ]
+// mods:  [ [ fill ] align ] [ sign ] [ '#' ] [ '0' ]
+// fill:  <any single character except '{' or '}'>
+// align: ( '<' | '>' | '=' )
+// sign:  ( '+' | '-' | ' ' )
 // type:  ( 's' | 'c' | 'd' | 'o' | 'x' | 'X' |
 //          'e' | 'E' | 'f' | 'F' | 'g' | 'G' )
 //
 // index, width, precision: [0-9]+
 //
-// Note especially that the flags have C `printf` semantics, not Python.
-//
 // Expects to be called with 'p' pointing one past the initial '{'.
 // Expects caller to have dealt with doubled {.
+// Expects caller to have initialized 'spec'.
 // Returns an updated 'p' pointing one past the final '}'.
 // If 'spec' has index zero on exit, the spec was ill-formed.
 
@@ -150,19 +174,63 @@ parse_subst(const char *p, size_t default_index, format_spec& spec)
     goto error;
   p++;
 
-  while (*p == '#' || *p == '0' || *p == '-' || *p == '+' || *p == ' ') {
-    switch(*p) {
-    case '#': spec.flag_hash  = true; break;
-    case '0': spec.flag_zero  = true; break;
-    case '-': spec.flag_minus = true; break;
-    case '+': spec.flag_plus  = true; break;
-    case ' ': spec.flag_space = true; break;
-    }
+  if (*p == '{' || *p == '\0')
+    goto error;
+  if (*p == '}') { // {:}
+    p++;
+    return p;
+  }
+
+  // "The presence of a fill character is signaled by the character following
+  // it, which must be one of the alignment options. If the second character
+  // of |format_spec| is not a valid alignment option, then it is assumed
+  // that both the fill character and the alignment option are absent."
+  // -- http://docs.python.org/3/library/string.html#format-specification-mini-language
+  //
+  // Not stated in the text, but evident in the grammar (and the
+  // actual behavior of Python), is that if the second character
+  // *isn't* a valid alignment option, but the *first* character is,
+  // then the first character is an alignment option and the fill
+  // defaults to a space character.
+
+  // at this point we know that p[0] is not NUL, but p[1] still might be.
+  if (p[1] == '\0')
+    goto error;
+  if (p[1] == '<' || p[1] == '>' || p[1] == '=' || p[1] == '^') {
+    spec.align = p[1];
+    spec.fill = p[0];
+    p += 2;
+  } else if (p[0] == '<' || p[0] == '>' || p[0] == '=' || p[0] == '^') {
+    spec.align = p[0];
+    spec.fill = ' ';
+    p += 1;
+  }
+
+  // Unlike printf, the sign, alternate-form, and zero-fill modifiers
+  // may _not_ appear in any order.
+  if (*p == '+' || *p == '-' || *p == ' ') {
+    spec.sign = *p;
+    p++;
+  }
+  if (*p == '#') {
+    spec.alternate_form = true;
+    p++;
+  }
+  if (*p == '0') {
+    // Python documents '0' right before the width as shorthand for an
+    // '0=' alignment modifier.  If you have both '0' and a
+    // conflicting alignment modifier, Python's actual behavior is not
+    // internally consistent.  We avoid the issue by treating '0' plus
+    // an explicit alignment modifier as an error.
+    if (spec.align != '\0')
+      goto error;
+    spec.align = '=';
+    spec.fill = '0';
     p++;
   }
 
   if (*p >= '0' && *p <= '9') {
-    spec.had_width = true;
+    spec.has_width = true;
     spec.width = strtoul(p, &endp, 10);
     if (endp == p) goto error; // this shouldn't happen, but we check anyway
     p = endp;
@@ -170,7 +238,7 @@ parse_subst(const char *p, size_t default_index, format_spec& spec)
 
   if (*p == '.') {
     p++;
-    spec.had_prec = true;
+    spec.has_precision = true;
     spec.precision = strtoul(p, &endp, 10);
     if (endp == p) goto error; // this case _can_ happen
     p = endp;
@@ -196,237 +264,6 @@ parse_subst(const char *p, size_t default_index, format_spec& spec)
   if (*p == '}')
     p++;
   return p;
-}
-
-//
-// Per-actual-type formatting subroutines.
-//
-
-static const char snprintf_failure[] = "[snprintf failed]";
-
-template <typename T>
-static void
-do_snprintf(T val, const format_spec &spec, char type, bool error, string &out)
-{
-  char format[13]; // "%#0-+ *.*llT";
-  char *p = format;
-  *p++ = '%';
-  if (spec.flag_hash)  *p++ = '#';
-  if (spec.flag_zero)  *p++ = '0';
-  if (spec.flag_minus) *p++ = '-';
-  if (spec.flag_plus)  *p++ = '+';
-  if (spec.flag_space) *p++ = ' ';
-  if (spec.had_width)  *p++ = '*';
-  if (spec.had_prec) {
-    *p++ = '.';
-    *p++ = '*';
-  }
-  // Slightly dirty trick here: we know by construction that if the type code
-  // (which has already been validated) is for an integer, then 'val' is
-  // [unsigned] long long.  Otherwise we know that it's double, so no
-  // size modifier is required.
-  if (type == 'd' || type == 'u' || type == 'o' || type == 'x' || type == 'X') {
-    *p++ = 'l';
-    *p++ = 'l';
-  }
-  *p++ = type;
-  *p = '\0';
-
-  char buf1[80];
-  char *s = buf1;
-  if (spec.had_width && spec.had_prec) {
-    int nreq = snprintf(buf1, sizeof buf1, format,
-                        spec.width, spec.precision, val);
-    if (nreq < 0)
-      throw snprintf_failure;
-    if (unsigned(nreq) >= sizeof buf1) {
-      s = new char[nreq+1];
-      if (snprintf(s, nreq+1, format,
-                   spec.width, spec.precision, val) != nreq) {
-        delete [] s;
-        throw snprintf_failure;
-      }
-    }
-  } else if (spec.had_width) {
-    int nreq = snprintf(buf1, sizeof buf1, format, spec.width, val);
-    if (nreq < 0)
-      throw snprintf_failure;
-    if (unsigned(nreq) >= sizeof buf1) {
-      s = new char[nreq+1];
-      if (snprintf(s, nreq+1, format, spec.width, val) != nreq) {
-        delete [] s;
-        throw snprintf_failure;
-      }
-    }
-  } else if (spec.had_prec) {
-    int nreq = snprintf(buf1, sizeof buf1, format, spec.precision, val);
-    if (nreq < 0)
-      throw snprintf_failure;
-    if (unsigned(nreq) >= sizeof buf1) {
-      s = new char[nreq+1];
-      if (snprintf(s, nreq+1, format, spec.precision, val) != nreq) {
-        delete [] s;
-        throw snprintf_failure;
-      }
-    }
-  } else {
-    int nreq = snprintf(buf1, sizeof buf1, format, val);
-    if (nreq < 0)
-      throw snprintf_failure;
-    if (unsigned(nreq) >= sizeof buf1) {
-      s = new char[nreq+1];
-      if (snprintf(s, nreq+1, format, val) != nreq) {
-        delete [] s;
-        throw snprintf_failure;
-      }
-    }
-  }
-
-  if (error)
-    out.append(BEGIN_ERRMSG);
-  out.append(s);
-  if (error)
-    out.append(END_ERRMSG);
-
-  if (s != buf1)
-    delete [] s;
-}
-
-static void
-do_format_unsigned_int(unsigned long long val,
-                       const format_spec &spec,
-                       string &out)
-{
-  char type = spec.type;
-  bool error = false;
-  if (type != 'd' && type != 'u' && type != 'o' &&
-      type != 'x' && type != 'X') {
-    type = 'u';
-    error = true;
-  }
-  do_snprintf(val, spec, type, error, out);
-}
-
-static void
-do_format_signed_int(long long val,
-                     const format_spec &spec,
-                     string &out)
-{
-  char type = spec.type;
-  bool error = false;
-  if (type != 'd' && type != 'u' && type != 'o' &&
-      type != 'x' && type != 'X') {
-    type = 'd';
-    error = true;
-  }
-  do_snprintf(val, spec, type, error, out);
-}
-
-static void
-do_format_float(double val,
-                const format_spec &spec,
-                string &out)
-{
-  char type = spec.type;
-  bool error = false;
-  if (type != 'e' && type != 'E' && type != 'f' && type != 'F' &&
-      type != 'g' && type != 'G') {
-    type = 'g';
-    error = true;
-  }
-  do_snprintf(val, spec, type, error, out);
-}
-
-// This takes unsigned long long instead of the actual character so it
-// can do something sensible on overflow.
-static void
-do_format_char(unsigned long long val,
-               const format_spec &spec,
-               string &out)
-{
-  if (spec.type == 'c' && val <= numeric_limits<unsigned char>::max()) {
-    // precision and the +, SPC, #, 0 modifiers are ignored; just emit
-    // the character with appropriate padding to the left or right.
-    if (!spec.flag_minus && spec.had_width && spec.width > 1)
-      out.append(spec.width - 1, ' ');
-
-    out.append(1, (unsigned char)val);
-
-    if (spec.flag_minus && spec.had_width && spec.width > 1)
-      out.append(spec.width - 1, ' ');
-
-  } else {
-    // bounce to do_format_unsigned_int, which will treat this as an error,
-    // because spec.type is not one of d,u,o,x,X (or we wouldn't have gotten
-    // here in the first place)
-    do_format_unsigned_int(val, spec, out);
-  }
-}
-
-static void
-do_format_str(const string &val,
-              const format_spec &spec,
-              string &out)
-{
-  if (spec.type != 's')
-    out.append(BEGIN_ERRMSG);
-
-  // string truncated to precision, padded to width.
-  // +, SPC, #, 0 modifiers ignored.
-
-  size_t slen = val.size();
-  if (spec.had_prec && spec.precision < slen)
-    slen = spec.precision;
-
-  size_t pad = 0;
-  if (spec.had_width && spec.width > slen)
-    pad = spec.width - slen;
-
-  if (pad && !spec.flag_minus)
-    out.append(pad, ' ');
-
-  out.append(val, 0, slen);
-
-  if (pad && spec.flag_minus)
-    out.append(pad, ' ');
-
-  if (spec.type != 's')
-    out.append(END_ERRMSG);
-}
-
-static void
-do_format_cstr(const char *val,
-               const format_spec &spec,
-               string &out)
-{
-  if (spec.type != 's')
-    out.append(BEGIN_ERRMSG);
-
-  // string truncated to precision, padded to width.
-  // +, SPC, #, 0 modifiers ignored.
-  // strnlen is not sufficiently portable to use here :(
-
-  size_t slen = 0;
-  if (!spec.had_prec)
-    slen = strlen(val);
-  else
-    for (const char *p = val; *p && slen < spec.precision; p++)
-      slen++;
-
-  size_t pad = 0;
-  if (spec.had_width && spec.width > slen)
-    pad = spec.width - slen;
-
-  if (pad && !spec.flag_minus)
-    out.append(pad, ' ');
-
-  out.append(val, slen);
-
-  if (pad && spec.flag_minus)
-    out.append(pad, ' ');
-
-  if (spec.type != 's')
-    out.append(END_ERRMSG);
 }
 
 // Parse a format string.  Python is picky about close curly braces
@@ -514,6 +351,223 @@ formatter::parse_format_string(const char *str)
   }
 }
 
+//
+// Per-actual-type formatting subroutines.
+//
+
+static void
+do_alignment(const string &s, const format_spec &spec,
+             char type, bool error, string &out)
+{
+  if (error)
+    out.append(BEGIN_ERRMSG);
+
+  // is alignment actually required?
+  if (!spec.has_width || spec.width <= s.size())
+    out.append(s);
+  else {
+    size_t pad = spec.width - s.size();
+    char align = spec.align;
+
+    if (align == '\0')
+      align = type == 's' ? '<' : '>';
+
+    switch (align) {
+    case '<':
+      out.append(s);
+      out.append(pad, spec.fill);
+      break;
+
+    case '>':
+      out.append(pad, spec.fill);
+      out.append(s);
+      break;
+
+    case '^':
+      // If there are an odd number of padding characters required,
+      // put one more on the right.
+      out.append(pad/2, spec.fill);
+      out.append(s);
+      out.append(pad/2 + pad%2, spec.fill);
+      break;
+
+    case '=': {
+      unsigned int leading = 0;
+      if (type != 's' && type != 'c' && (s[0] == '-' || spec.sign != '-'))
+        leading = 1;
+      if (spec.alternate_form && (type == 'o' || type == 'x' || type == 'X'))
+        leading += 2;
+
+      out.append(s.substr(0, leading));
+      out.append(pad, spec.fill);
+      out.append(s.substr(leading));
+    } break;
+
+    default:
+      throw "impossible alignment specifier";
+    }
+  }
+
+  if (error)
+    out.append(END_ERRMSG);
+}
+
+// The heavy lifting on numeric formatting is done by a stringstream.
+// However, the iostreams feature set is inadequate to handle all of
+// Python's alignment, explicit sign, and explicit base features, so
+// we do that part by hand.
+
+template <typename T>
+static void
+do_numeric_format(T val, const format_spec &spec,
+                  char type, bool error, string &out)
+{
+  using std::ios_base;
+
+  ostringstream os;
+  os.exceptions(ios_base::failbit|ios_base::badbit|ios_base::eofbit);
+
+  if (spec.has_precision)
+    os.precision(spec.precision);
+  if (spec.alternate_form)
+    os.setf(ios_base::showpoint); // we do showbase ourselves
+
+  // "general" style is the default
+  if (type == 'e' || type == 'E') {
+    os.setf(ios_base::scientific, ios_base::floatfield);
+  } else if (type == 'f' || type == 'F') {
+    os.setf(ios_base::fixed, ios_base::floatfield);
+  }
+
+  // decimal is the default
+  if (type == 'o') {
+    os.setf(ios_base::oct, ios_base::basefield);
+  } else if (type == 'x' || type == 'X') {
+    os.setf(ios_base::hex, ios_base::basefield);
+  }
+
+  if (type == 'E' || type == 'F' || type == 'G' || type == 'X') {
+    os.setf(ios_base::uppercase);
+  }
+
+  // iostreams can mark positive values with '+' but not with a space,
+  // so we do it ourselves in both cases
+  PUSH_WARNINGS_SUPPRESS_TAUTOLOGICAL_COMPARE;
+  if (val >= 0 && spec.sign != '-')
+    os << spec.sign;
+  POP_WARNINGS;
+
+  // iostreams 'o' alternate form is '0nnnn' not '0onnnn'
+  if (spec.alternate_form) {
+    if (type == 'o')
+      os << "0o";
+    else if (type == 'x')
+      os << "0x";
+    else if (type == 'X')
+      os << "0X";
+  }
+
+  os << val;
+
+  do_alignment(os.str(), spec, type, error, out);
+}
+
+static void
+do_format_unsigned_int(unsigned long long val,
+                       const format_spec &spec,
+                       string &out)
+{
+  char type = spec.type;
+  bool error = false;
+  if (type != 'd' && type != 'u' && type != 'o' &&
+      type != 'x' && type != 'X') {
+    type = 'u';
+    error = true;
+  }
+  do_numeric_format(val, spec, type, error, out);
+}
+
+static void
+do_format_signed_int(long long val,
+                     const format_spec &spec,
+                     string &out)
+{
+  char type = spec.type;
+  bool error = false;
+  if (type != 'd' && type != 'u' && type != 'o' &&
+      type != 'x' && type != 'X') {
+    type = 'd';
+    error = true;
+  }
+  do_numeric_format(val, spec, type, error, out);
+}
+
+static void
+do_format_float(double val,
+                const format_spec &spec,
+                string &out)
+{
+  char type = spec.type;
+  bool error = false;
+  if (type != 'e' && type != 'E' && type != 'f' && type != 'F' &&
+      type != 'g' && type != 'G') {
+    type = 'g';
+    error = true;
+  }
+  do_numeric_format(val, spec, type, error, out);
+}
+
+// This takes unsigned long long instead of the actual character so it
+// can do something sensible on overflow.
+static void
+do_format_char(unsigned long long val,
+               const format_spec &spec,
+               string &out)
+{
+  if (spec.type == 'c' && val <= numeric_limits<unsigned char>::max())
+    // precision and most modifiers are ignored; just emit the
+    // character with appropriate padding.
+    do_alignment(string(1, val), spec, spec.type, false, out);
+
+  else
+    // format as unsigned decimal, with error markers.
+    do_numeric_format(val, spec, 'u', true, out);
+}
+
+static void
+do_format_str(const string &val,
+              const format_spec &spec,
+              string &out)
+{
+  // Truncate to precision, pad to width.
+  if (!spec.has_precision)
+    do_alignment(val, spec, 's', spec.type != 's', out);
+  else
+    do_alignment(val.substr(0, spec.precision),
+                 spec, 's', spec.type != 's', out);
+}
+
+static void
+do_format_cstr(const char *val,
+               const format_spec &spec,
+               string &out)
+{
+  // Truncate to precision, pad to width.
+  // In the with-precision case, we can't just convert directly to a
+  // C++ string because the (const char *, size_t) constructor does
+  // *not* look for a nul-terminator.
+  // strnlen is not sufficiently portable to use here :(
+
+  if (!spec.has_precision)
+    do_alignment(val, spec, 's', spec.type != 's', out);
+  else {
+    size_t slen = 0;
+    for (const char *p = val; *p && slen < spec.precision; p++)
+      slen++;
+
+    do_alignment(string(val, slen), spec, 's', spec.type != 's', out);
+  }
+}
 
 void
 formatter::format_sub(size_t i, unsigned char val) noexcept
@@ -672,12 +726,11 @@ formatter::format_sub(size_t i, const void *val) noexcept
     try {
       if (spec->type == '\0')
         spec->type = 'x';
-      if (!spec->had_width && !spec->had_prec && !spec->flag_hash
-          && !spec->flag_zero && !spec->flag_minus && !spec->flag_plus
-          && !spec->flag_space) {
-        spec->flag_zero = true;
-        spec->had_width = true;
+      if (!spec->has_width) {
+        spec->has_width = true;
         spec->width = sizeof(void *) * 2;
+        spec->fill = '0';
+        spec->align = '>';
       }
       do_format_unsigned_int(detail::uintptr_t(val), *spec,
                              segs.at(spec->target));
