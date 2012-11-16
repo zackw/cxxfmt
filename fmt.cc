@@ -42,6 +42,21 @@ typedef std::conditional<
 static_assert(!std::is_same<uintptrt, double>::value,
               "failed to detect an integral type with the width of 'void *'");
 
+// Similarly for 'double'.
+typedef std::conditional<
+  sizeof(double) == sizeof(unsigned int), unsigned int,
+  typename std::conditional<
+    sizeof(double) == sizeof(unsigned long), unsigned long,
+    typename std::conditional<
+      sizeof(double) == sizeof(unsigned long long), unsigned long long,
+      double // failure marker
+    >::type
+  >::type
+>::type uintdoublet;
+
+static_assert(!std::is_same<uintdoublet, double>::value,
+              "failed to detect an integral type with the width of 'double'");
+
 // Ensure that we can print values of these types without casting.
 
 static_assert(sizeof(size_t) <= sizeof(unsigned long long),
@@ -474,14 +489,25 @@ do_format_unsigned_int(unsigned long long val,
                        const format_spec &spec,
                        string &out)
 {
-  char type = spec.type;
-  bool error = false;
-  if (type != 'd' && type != 'u' && type != 'o' &&
-      type != 'x' && type != 'X') {
-    type = 'u';
-    error = true;
+  switch (spec.type) {
+  case 'u':
+  case 'd':
+  case 'o':
+  case 'x':
+  case 'X':
+    do_numeric_format(val, spec, spec.type, false, out);
+    return;
+
+  case 'e': case 'E':
+  case 'f': case 'F':
+  case 'g': case 'G':
+    do_numeric_format(double(val), spec, spec.type, false, out);
+    return;
+
+  default:
+    do_numeric_format(val, spec, 'u', true, out);
+    return;
   }
-  do_numeric_format(val, spec, type, error, out);
 }
 
 static void
@@ -489,14 +515,25 @@ do_format_signed_int(long long val,
                      const format_spec &spec,
                      string &out)
 {
-  char type = spec.type;
-  bool error = false;
-  if (type != 'd' && type != 'u' && type != 'o' &&
-      type != 'x' && type != 'X') {
-    type = 'd';
-    error = true;
+  switch (spec.type) {
+  case 'u':
+  case 'd':
+  case 'o':
+  case 'x':
+  case 'X':
+    do_numeric_format(val, spec, spec.type, false, out);
+    return;
+
+  case 'e': case 'E':
+  case 'f': case 'F':
+  case 'g': case 'G':
+    do_numeric_format(double(val), spec, spec.type, false, out);
+    return;
+
+  default:
+    do_numeric_format(val, spec, 'd', true, out);
+    return;
   }
-  do_numeric_format(val, spec, type, error, out);
 }
 
 static void
@@ -504,14 +541,30 @@ do_format_float(double val,
                 const format_spec &spec,
                 string &out)
 {
-  char type = spec.type;
-  bool error = false;
-  if (type != 'e' && type != 'E' && type != 'f' && type != 'F' &&
-      type != 'g' && type != 'G') {
-    type = 'g';
-    error = true;
+  switch (spec.type) {
+  case 'e': case 'E':
+  case 'f': case 'F':
+  case 'g': case 'G':
+    do_numeric_format(val, spec, spec.type, false, out);
+    return;
+
+  case 'u':
+  case 'd':
+  case 'o':
+  case 'x':
+  case 'X': {
+    union {
+      double d;
+      uintdoublet i;
+    } u;
+    u.d = val;
+    do_numeric_format(u.i, spec, spec.type, false, out);
+  } return;
+
+  default:
+    do_numeric_format(val, spec, 'g', true, out);
+    return;
   }
-  do_numeric_format(val, spec, type, error, out);
 }
 
 // This takes unsigned long long instead of the actual character so it
