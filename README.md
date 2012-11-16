@@ -61,6 +61,9 @@ following lacunae:
    at that point.
 4. Pre-format conversions (`!r`, `!s`, etc) are not supported.
 
+Ill-formed format specifications are printed as literal text, but
+surrounded by VT-220 reverse video escapes.
+
 All built-in types may be passed as extended arguments to `fmt`, as
 may `std::string` and any type that exposes any of the following:
 
@@ -74,14 +77,15 @@ may `std::string` and any type that exposes any of the following:
 
 ## Exceptions
 
-`fmt::format` itself guarantees not to throw exceptions under any
-circumstances whatsoever.  However, function calls within the argument
-list (including implicitly generated calls to `str`, `c_str`, `what`,
-and conversion operators) may still throw.
+`fmt::format` guarantees not to throw exceptions from its internals
+under any circumstances whatsoever, and to intercept exceptions thrown
+by conversion functions from the list above.  However, it cannot
+intercept exceptions thrown by explicitly-written function calls or
+other complex expressions within its argument list.
 
-If an exception occurs within `format`, it will be trapped, and a
-placeholder (`[exception]`, surrounded by VT-220 reverse video
-escapes) will replace either the substitution that failed, or the
+If `format` traps an exception or encounters an internal failure, it
+will insert a human-readable placeholder, surrounded by VT-220 reverse
+video escapes, in place of either the substitution that failed, or the
 entire string.  If even that can't be made to work (for instance, if
 memory allocation fails during construction of the placeholder
 string), `format` will call `std::terminate`.
@@ -95,7 +99,8 @@ However, the library guarantees to detect and safely handle mismatches
 at runtime, as follows:
 
 * If there are more arguments than required by the format string, the
-  excess arguments are ignored.
+  excess arguments are ignored.  Note that all arguments will still be
+  fully evaluated and converted to strings.
 
 * If there are fewer arguments than required, the substitution markers
   that don't correspond to arguments will produce the placeholder

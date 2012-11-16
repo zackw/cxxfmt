@@ -20,8 +20,7 @@ using std::string;
 using std::ostringstream;
 using std::vector;
 
-namespace fmt {
-namespace detail {
+namespace {
 
 // We must avoid writing a direct cast from void * to an integer of a
 // different size.  We don't know what size a pointer is, we cannot
@@ -38,9 +37,9 @@ typedef std::conditional<
       double // failure marker
     >::type
   >::type
->::type uintptr_t;
+>::type uintptrt;
 
-static_assert(!std::is_same<uintptr_t, double>::value,
+static_assert(!std::is_same<uintptrt, double>::value,
               "failed to detect an integral type with the width of 'void *'");
 
 // Ensure that we can print values of these types without casting.
@@ -50,28 +49,27 @@ static_assert(sizeof(size_t) <= sizeof(unsigned long long),
 static_assert(sizeof(ptrdiff_t) <= sizeof(long long),
               "'long long' is not big enough for 'ptrdiff_t'");
 
-} // namespace detail
+// Determine whether a value of unspecified type, which may or may not
+// be signed, is negative, without provoking "comparison is always
+// true" warnings.
 
-// There is a template below that gets an unwanted "comparison is
-// always true" warning when instantiated with an unsigned type (it is
-// also instantiated with signed types, and then the comparison is
-// necessary).  The necessary incantations to suppress this are
-// slightly different for GCC and Clang, and we can't just put both,
-// because then each will complain about the other's construct.
-// Furrfu.
-#if defined __clang__
-# define PUSH_WARNINGS_SUPPRESS_TAUTOLOGICAL_COMPARE \
-    _Pragma("GCC diagnostic push"); \
-    _Pragma("GCC diagnostic ignored \"-Wtautological-compare\"")
-# define POP_WARNINGS \
-    _Pragma("GCC diagnostic pop")
-#elif defined __GNUC__
-# define PUSH_WARNINGS_SUPPRESS_TAUTOLOGICAL_COMPARE \
-    _Pragma("GCC diagnostic push"); \
-    _Pragma("GCC diagnostic ignored \"-Wtype-limits\"")
-# define POP_WARNINGS \
-    _Pragma("GCC diagnostic pop")
-#endif
+template <typename T>
+bool
+is_negative(T t, typename std::enable_if<std::is_signed<T>::value>::type* = 0)
+{
+  return t < 0;
+}
+
+template <typename T>
+bool
+is_negative(T, typename std::enable_if<std::is_unsigned<T>::value>::type* = 0)
+{
+  return false;
+}
+
+} // anonymous namespace
+
+namespace fmt {
 
 // Error conditions in the formatter are, in general, reported by
 // emitting some sort of placeholder, surrounded by VT-220 reverse
@@ -452,10 +450,9 @@ do_numeric_format(T val, const format_spec &spec,
 
   // iostreams can mark positive values with '+' but not with a space,
   // so we do it ourselves in both cases
-  PUSH_WARNINGS_SUPPRESS_TAUTOLOGICAL_COMPARE;
-  if (val >= 0 && spec.sign != '-')
+
+  if (!is_negative(val) && spec.sign != '-')
     os << spec.sign;
-  POP_WARNINGS;
 
   // iostreams 'o' alternate form is '0nnnn' not '0onnnn'
   if (spec.alternate_form) {
@@ -732,7 +729,7 @@ formatter::format_sub(size_t i, const void *val) noexcept
         spec->fill = '0';
         spec->align = '>';
       }
-      do_format_unsigned_int(detail::uintptr_t(val), *spec,
+      do_format_unsigned_int(uintptrt(val), *spec,
                              segs.at(spec->target));
 
     } catch (std::exception const& e) {
@@ -843,6 +840,18 @@ formatter::format_sub(size_t i, const string &val) noexcept
       break;
     spec = &specs[i];
   }
+}
+
+void
+formatter::format_exc(size_t i, const char *what) noexcept
+{
+  format_sub(i, string(BEGIN_ERRMSG) + what + END_ERRMSG);
+}
+
+void
+formatter::format_exc(size_t i) noexcept
+{
+  format_sub(i, generic_exception_msg);
 }
 
 // Public interface.

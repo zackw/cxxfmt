@@ -99,6 +99,9 @@ class formatter
   void format_sub(size_t, const void *) noexcept;
   void format_sub(size_t, const std::string &) noexcept;
 
+  void format_exc(size_t n, const char *what) noexcept;
+  void format_exc(size_t n) noexcept;
+
   // Adapters pick the appropriate base category for every possible
   // argument.
 
@@ -148,13 +151,21 @@ class formatter
   { format_sub(n, (typename std::underlying_type<T>::type)(t)); }
 
   // Convert any object that can be converted to a string, either by
-  // construction or by member methods.
+  // construction or by member methods.  These can invoke arbitrary
+  // code, so they must trap exceptions.
+#define CXXFMT_FORMAT_SUB_WITH_CATCH(n, expr)  do {                     \
+    try                             { format_sub(n, expr); }            \
+    catch (std::exception const& e) { format_exc(n, e.what()); }        \
+    catch (const char *what)        { format_exc(n, what); }            \
+    catch (...)                     { format_exc(n); }                  \
+  } while (0)
+
   template <typename T>
   void format_sub(size_t n, const T& t,
                   typename std::enable_if<
                     std::is_constructible<std::string, T>::value
                   >::type* = 0)
-  { format_sub(n, std::string(t)); }
+  { CXXFMT_FORMAT_SUB_WITH_CATCH(n, std::string(t)); }
 
   template <typename T>
   void format_sub(size_t n, const T& t,
@@ -163,21 +174,22 @@ class formatter
                      detail::has_str<T, std::string (T::*)() const>::value ||
                      detail::has_str<T,const std::string&(T::*)()const>::value)
                   >::type* = 0)
-  { format_sub(n, t.str()); }
+  { CXXFMT_FORMAT_SUB_WITH_CATCH(n, t.str()); }
 
   template <typename T>
   void format_sub(size_t n, const T& t,
                   typename std::enable_if<
                     detail::has_c_str<T, const char *(T::*)() const>::value
                   >::type* = 0)
-  { format_sub(n, t.c_str()); }
+  { CXXFMT_FORMAT_SUB_WITH_CATCH(n, t.c_str()); }
 
   template <typename T>
   void format_sub(size_t n, const T& t,
                   typename std::enable_if<
                     detail::has_what<T, const char *(T::*)() const>::value
                   >::type* = 0)
-  { format_sub(n, t.what()); }
+  { CXXFMT_FORMAT_SUB_WITH_CATCH(n, t.what()); }
+#undef CXXFMT_FORMAT_SUB_WITH_CATCH
 
   // Convert arbitrary pointers to 'void *'.
   template <typename T>
