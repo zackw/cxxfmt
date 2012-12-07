@@ -1,117 +1,13 @@
-# Test utility library.
 
 import collections
 import glob
 import json
 import os
+import os.path
 import subprocess
 import sys
 
-#
-# Misc utilities
-#
-
-def is_script(path):
-    with open(path, "r") as f:
-        return f.read(2) == "#!"
-
-# This should be in subprocess, but it ain't.
-def check_io(*popenargs, **kwargs):
-    if 'stdout' in kwargs:
-        raise ValueError('stdout argument not allowed, it will be overridden.')
-    if 'stdin' in kwargs:
-        raise ValueError('stdin argument not allowed, it will be overridden.')
-    if 'input' in kwargs:
-        inputdata = kwargs['input']
-        del kwargs['input']
-    else:
-        inputdata=""
-    process = subprocess.Popen(stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               *popenargs, **kwargs)
-    output, unused_err = process.communicate(inputdata)
-    retcode = process.poll()
-    if retcode:
-        cmd = kwargs.get("args")
-        if cmd is None:
-            cmd = popenargs[0]
-        raise subprocess.CalledProcessError(retcode, cmd, output=output)
-    return output
-
-#
-# Test case generation utilities
-#
-
-class TestBlock(object):
-    def __init__(self, mod, name, casetype, generator):
-        self.mod = mod
-        self.name = name
-        self.casetype = casetype
-        self.generator = generator
-        self.d = self.__dict__
-
-    def __cmp__(self, other):
-        # primary sort alpha by module
-        if self.mod < other.mod: return -1
-        if self.mod > other.mod: return 1
-
-        # sort any block named 'simple' to the top within its module
-        if self.name == "simple" and other.name != "simple": return -1
-        if self.name != "simple" and other.name == "simple": return 1
-
-        # otherwise, alphabetical
-        if self.name < other.name: return -1
-        if self.name > other.name: return 1
-        return 0
-
-    def fullname(self):
-        return "{mod}.{name}".format(**self.d)
-
-    def write_cases(self, outf):
-        outf.write("const {casetype} {mod}_{name}[] = {{\n".format(**self.d))
-        for case in self.generator():
-            outf.write("  { " + case + " },\n")
-        outf.write("};\n\n")
-
-    def write_tblock_obj(self, outf):
-        outf.write("const tblock<{casetype}> "
-                   "{mod}_{name}_b(\"{mod}.{name}\", {mod}_{name});\n"
-                   .format(**self.d))
-
-    def write_tblocks_entry(self, outf):
-        outf.write("  &{mod}_{name}_b,\n".format(**self.d));
-
-class TestGenerator(object):
-    def __init__(self):
-        self.blocks = []
-        self.duplicate_preventer = set()
-
-    def add_block(self, block):
-        f = block.fullname()
-        if f in self.duplicate_preventer:
-            raise KeyError(f + " already registered")
-        self.blocks.append(block)
-        self.duplicate_preventer.add(f)
-
-    def add_module(self, name, casetype, contents):
-        for k, v in contents.iteritems():
-            if k.startswith('g_'):
-                self.add_block(TestBlock(name, k[2:], casetype, v))
-
-    def generate(self, outf):
-        self.blocks.sort()
-
-        for b in self.blocks: b.write_cases(outf)
-        for b in self.blocks: b.write_tblock_obj(outf)
-
-        outf.write("\nconst vector<const i_tblock*> tblocks = {\n")
-        for b in self.blocks: b.write_tblocks_entry(outf)
-        outf.write("};\n")
-
-
-def generate_mod(outf, name, casetype, contents):
-    g = TestGenerator()
-    g.add_module(name, casetype, contents)
-    g.generate(outf)
+import util
 
 #
 # Compiler detection and invocation
@@ -173,9 +69,9 @@ class Compiler(object):
             Compiler.devnull = open(os.devnull, "r+")
         try:
             # This is how g++ and clang++ want to be invoked.
-            output = check_io([prog, "-E", "-xc++"] + extra_args + ["-"],
-                              stderr=Compiler.devnull,
-                              input=identify_source)
+            output = util.check_io([prog, "-E", "-xc++"] + extra_args + ["-"],
+                                   stderr=Compiler.devnull,
+                                   input=identify_source)
         except subprocess.CalledProcessError:
             # Retry with appropriate switches for MSVC should go here.
             # I am getting a headache just looking at its documentation,
@@ -356,7 +252,7 @@ def find_compilers():
             for ver in glob.iglob(os.path.join(path, cmd) + "*"):
                 rp = os.path.realpath(ver)
                 if rp in executables: continue
-                if is_script(rp): continue
+                if util.is_script(rp): continue
                 executables.add(rp)
 
     compilers = []
