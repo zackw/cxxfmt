@@ -2,7 +2,7 @@
 # Generate formatting test cases for simple string constants.
 #
 
-import lib
+import generator
 
 words = [ '', 'i', 'of', 'sis', 'fice', 'drisk', 'elanet', 'hippian',
           'botanist', 'synaptene', 'cipherhood', 'schizognath' ]
@@ -47,5 +47,5 @@ def generate(outf):
 
 if __name__ == '__main__':
     import sys
-    lib.generate_mod(sys.stdout, 'strings', 'case_1arg_s', globals())
+    generator.generate_mod(sys.stdout, 'strings', 'case_1arg_s', globals())
 
