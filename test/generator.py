@@ -6,7 +6,6 @@ class TestBlock(object):
         self.name = name
         self.casetype = casetype
         self.generator = generator
-        self.d = self.__dict__
 
     def __cmp__(self, other):
         # primary sort alpha by module
@@ -22,22 +21,27 @@ class TestBlock(object):
         if self.name > other.name: return 1
         return 0
 
+    def emit(self, pattern, outf=None):
+        txt = pattern.format(**vars(self))
+        if outf is not None:
+            outf.write(txt)
+        return txt
+
     def fullname(self):
-        return "{mod}.{name}".format(**self.d)
+        return self.emit("{mod}.{name}")
 
     def write_cases(self, outf):
-        outf.write("const {casetype} {mod}_{name}[] = {{\n".format(**self.d))
+        self.emit("const {casetype} {mod}_{name}[] = {{\n", outf)
         for case in self.generator():
             outf.write("  { " + case + " },\n")
         outf.write("};\n\n")
 
     def write_tblock_obj(self, outf):
-        outf.write("const tblock<{casetype}> "
-                   "{mod}_{name}_b(\"{mod}.{name}\", {mod}_{name});\n"
-                   .format(**self.d))
+        self.emit("const tblock<{casetype}> "
+                  "{mod}_{name}_b(\"{mod}.{name}\", {mod}_{name});\n", outf)
 
     def write_tblocks_entry(self, outf):
-        outf.write("  &{mod}_{name}_b,\n".format(**self.d));
+        self.emit("  &{mod}_{name}_b,\n", outf)
 
 class TestGenerator(object):
     def __init__(self):
