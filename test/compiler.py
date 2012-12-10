@@ -250,17 +250,17 @@ class Clang(UnixCompiler):
 
         compilers = []
         if props["cxx11"] == 1:
-            compilers.extend(cls(prog, props, flags, ()))
+            compilers.append(cls(prog, props, flags, ()))
 
         if try_libcxx:
-            nflags = flags
+            nflags = flags[:]
             nflags[1:1] = ("-stdlib=libc++",)
             nprops = Compiler.identify(prog, nflags)
             if nprops["cxx11"] == 1 and nprops["lib"] == "llvm":
                 compilers.append(cls(prog, nprops, nflags, ()))
 
         if try_libgnu:
-            nflags = flags
+            nflags = flags[:]
             nflags[1:1] = ("-stdlib=libstdc++",)
             nprops = Compiler.identify(prog, nflags)
             if nprops["cxx11"] == 1 and nprops["lib"] == "gnu":
