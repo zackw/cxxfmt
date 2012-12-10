@@ -146,6 +146,13 @@ class Compiler(object):
         self.flags = flags
         self.libs = libs
 
+    def __cmp__(self, other):
+        if self.prog < other.prog: return -1
+        if self.prog > other.prog: return 1
+        if self.props['otag'] < other.props['otag']: return -1
+        if self.props['otag'] > other.props['otag']: return 1
+        return 0
+
     def objname(self, src):
         """Return an appropriately labeled name for an object file
            compiled from source file 'src' with this compiler."""
@@ -293,15 +300,18 @@ class Gcc(UnixCompiler):
         compilers = [cls(prog, props, flags, ())]
 
         # GCC can be persuaded to use libc++ but it involves more work
-        # than for clang.  If anyone has a better idea than this hardwired
-        # list of possible locations for libc++'s headers, please let me know.
+        # than for clang.  If anyone has a better idea than this
+        # hardwired list of possible locations for libc++'s headers,
+        # please let me know.  The libc++ shipped with MacPorts llvm
+        # 3.0 and 3.1 do not have their headers in any of these
+        # directories, but they don't work with gcc anyway, so there's
+        # no point trying.
         libcxxinc = None
         for loc in ["/include",
                     "/usr/include",
                     "/usr/local/include",
                     "/opt/include",
-                    "/opt/local/include",
-                    "/opt/local/libexec/llvm-3.0/lib" # MacPorts, sigh
+                    "/opt/local/include"
                     ]:
             if os.path.isfile(loc + "/c++/v1/iosfwd"):
                 libcxxinc = loc + "/c++/v1"
@@ -338,6 +348,7 @@ def find_compilers():
     for ex in executables:
         props = Compiler.identify(ex)
         compilers.extend(compiler_classes[props["cc"]].probe(ex, props))
+    compilers.sort()
     return compilers
 
 if __name__ == '__main__':
