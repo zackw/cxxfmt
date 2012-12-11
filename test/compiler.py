@@ -325,7 +325,51 @@ class Gcc(UnixCompiler):
                                         "-lc++", "-lc", "-lgcc_s")))
         return compilers
 
+# This is too special-purpose to go in util.
+def unwrap_script(path):
+    """If 'path' is a shell script (as determined by util.is_script),
+       assume that it is a wrapper around a compiler binary, and
+       attempt to extract and return the name of the program it
+       actually runs.
+
+       If 'path' is not a shell script, returns it unchanged.
+       If 'path' is a shell script but it couldn't figure out
+       the name of the program it actually runs, returns False.
+
+       This doesn't try very hard.  Its /raison d'^etre/ is the clang
+       wrapper scripts installed by MacPorts, which we need to accept
+       as compilers, and the "g++-libc++" wrapper script installed by
+       libc++ on some Linux distributions, which we need to avoid.
+       Failure here just means that we miss a potential compiler
+       candidate, which is no big deal.
+       """
+    interpreter = util.is_script(path)
+    if interpreter is False: return path
+    if interpreter is True: return False
+
+    # Definitely a shell script at this point.
+    # We assume it is a shell script that runs a compiler, therefore
+    # invoking it with "-E" and an empty .cc file will exit successfully.
+    with util.mkstemp_autodel(suffix=".cc", text=True) as src:
+        cmds = subprocess.check_output([interpreter, "-x", path, "-E", src],
+                                       stderr=subprocess.STDOUT)
+        lines = cmds.splitlines()
+        lines.reverse()
+        for line in lines:
+            if line == "": continue
+            if line[0] == "+" and src in line:
+                for word in line.split():
+                    if word != "+" and word != "exec":
+                        if word.startswith("/"):
+                            canon = os.path.realpath(word)
+                            if os.path.isfile(canon):
+                                return canon
+                        return False
+
+
 def find_compilers():
+    """Identify all usable compilers on this system and return them
+    as a list of Compiler objects."""
     compiler_classes = collections.defaultdict(lambda: Unknown,
                                                gcc=Gcc,
                                                clang=Clang)
@@ -340,7 +384,7 @@ def find_compilers():
     for cmd in ["g++", "clang++"]:
         for path in pathv:
             for ver in glob.iglob(os.path.join(path, cmd) + "*"):
-                rp = util.unwrap_script(os.path.realpath(ver))
+                rp = unwrap_script(os.path.realpath(ver))
                 if not rp: continue
                 executables.add(rp)
 
