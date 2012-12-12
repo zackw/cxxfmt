@@ -3,7 +3,7 @@
 #
 
 if __name__ == '__main__':
-    verbosity = 2
+    verbosity = 1
 else:
     from __main__ import verbosity
 

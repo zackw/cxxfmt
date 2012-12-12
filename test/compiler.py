@@ -3,7 +3,7 @@
 #
 
 if __name__ == '__main__':
-    verbosity = 1
+    verbosity = 2
 else:
     from __main__ import verbosity
 
@@ -47,70 +47,73 @@ class Compiler(object):
            C++ runtime library it offers, when invoked with 'extra_args'.
            'prog' should be an absolute pathname to an executable."""
 
-        identify_source = """\
-// We have to include some C++ library header to get the library's
-// identifying macros defined.  There are no C++ library headers that
-// define nothing but macros, so we put a marker after the #include
-// ('%%', which is not syntactically valid C++ and therefore will not
-// appear in the expansion of the #include) and strip out everything
-// before that marker from Python.  This also gives us an opportunity
-// to strip line markers and any other junk that may appear in
-// preprocessor output.  If the compiler is already in C++11 mode,
-// we include <type_traits> instead of <iosfwd> to detect more possible
-// incompatibilities between the compiler and the library.
+        identify_source = r"""
+// Thanks largely to the clown show that is MacPorts, we have to
+// compile and run a test program to make absolutely sure that the
+// particular combination of compiler and library we're trying
+// actually works.  If the compiler is already in C++11 mode, we
+// include <type_traits> even though it's not actually used, to detect
+// more possible incompatibilities between the compiler and the library.
 
+#include <iostream>
 #if __cplusplus >= 201103L
 #include <type_traits>
-#else
-#include <iosfwd>
 #endif
 
-%%
-
+using std::cout;
+int main()
 {
+  cout << "{\n"
 #if __cplusplus >= 201103L
-  "cxx11" : 1,
+       << "  \"cxx11\" : 1,\n"
 #else
-  "cxx11" : 0,
+       << "  \"cxx11\" : 0,\n"
 #endif
 // clang defines __GNUC__ and might plausibly decide to define
 // _MSC_VER on Windows, so check for it first.
 #if defined __clang__
-  "cc"    : "clang",
-  "ccmaj" : __clang_major__,
-  "ccmin" : __clang_minor__,
+       << "  \"cc\"    : \"clang\",\n"
+       << "  \"ccmaj\" : " << __clang_major__ << ",\n"
+       << "  \"ccmin\" : " << __clang_minor__ << ",\n"
 #elif defined __GNUC__
-  "cc"    : "gcc",
-  "ccmaj" : __GNUC__,
-  "ccmin" : __GNUC_MINOR__,
+       << "  \"cc\"    : \"gcc\",\n"
+       << "  \"ccmaj\" : " << __GNUC__ << ",\n"
+       << "  \"ccmin\" : " << __GNUC_MINOR__ << ",\n"
 #elif defined _MSC_VER
-  "cc"    : "msvc",
-  "ccmaj" : _MSC_VER,
-  "ccmin" : 0,
+       << "  \"cc\"    : \"msvc\",\n"
+       << "  \"ccmaj\" : " << _MSC_VER << ",\n"
+       << "  \"ccmin\" : 0,\n"
 #else
-  "cc"    : "unknown",
-  "ccmaj" : 0,
-  "ccmin" : 0,
+       << "  \"cc\"    : \"unknown\",\n"
+       << "  \"ccmaj\" : 0,\n"
+       << "  \"ccmin\" : 0,\n"
 #endif
 #if defined _LIBCPP_VERSION
-  "lib"   : "llvm" // "libc++" is too generic
+       << "  \"lib\"   : \"llvm\"\n" // "libc++" is too generic
 #elif defined __GLIBCXX__
-  "lib"   : "gnu"
+       << "  \"lib\"   : \"gnu\"\n"
 #elif defined _MSC_VER
-  "lib"   : "ms"
+       << "  \"lib\"   : \"ms\"\n"
 #else
-  "lib"   : "unknown"
+       << "  \"lib\"   : \"unknown\"\n"
 #endif
+       << "}\n";
+  return 0;
 }
 """
 
         try:
             # This is how g++ and clang++ want to be invoked.
-            argv = [prog, "-E", "-xc++"] + extra_args + ["-"]
-            #sys.stderr.write(" ".join(argv) + "\n")
-            output = util.check_io(argv,
-                                   stderr=Compiler.DEVNULL,
-                                   input=identify_source)
+            argv = [prog, "-xc++", "-o", "id.exe"] + extra_args + ["-"]
+            if verbosity >= 2:
+                sys.stderr.write(" ".join(argv) + "\n")
+                cc_stderr = None
+            else:
+                cc_stderr = Compiler.DEVNULL
+            cc_output = util.check_io(argv,
+                                      stderr=cc_stderr,
+                                      input=identify_source)
+            output = util.check_io("./id.exe")
         except subprocess.CalledProcessError:
             # Retry with appropriate switches for MSVC should go here.
             # I am getting a headache just looking at its documentation,
@@ -121,9 +124,7 @@ class Compiler(object):
                      "ccmin" : 0,
                      "lib"   : "unknown" }
 
-        data = "".join(l for l in output[output.rfind("%%")+2:].splitlines()
-                       if len(l) > 0 and l[0] != '#')
-        props = json.loads(data)
+        props = json.loads(output)
 
         props["ccver"] = str(props["ccmaj"]) + "." + str(props["ccmin"])
 
@@ -396,8 +397,18 @@ def find_compilers():
     for cmd in ["g++", "clang++"]:
         for path in pathv:
             for ver in glob.iglob(os.path.join(path, cmd) + "*"):
-                rp = unwrap_script(os.path.realpath(ver))
+                rp = unwrap_script(ver)
                 if not rp: continue
+                rp = os.path.realpath(rp)
+                # make sure we are invoking the C++ variant of the
+                # compiler driver, or we may wind up failing to link
+                # with the C++ runtime
+                if "++" not in os.path.basename(rp):
+                    if rp.endswith("cc"):
+                        rp = rp[:-2] + "++"
+                    else:
+                        rp = rp + "++"
+                if not rp or not os.path.exists(rp): continue
                 executables.add(rp)
 
     compilers = []
