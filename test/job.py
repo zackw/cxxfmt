@@ -89,8 +89,26 @@ class TestJob(Job):
             raise ValueError("no LinkJob in dependencies")
 
     def run(self):
-        self.exitcode = subprocess.call([self.exe] + self.args)
+        self.exitcode = subprocess.call([os.path.join(".", self.exe)]
+                                        + self.args)
         return self.exitcode == 0
+
+class GenerateJob(Job):
+    """Job to generate a file of test code named 'outname'.  'gen'
+       must be duck-type compatible with generator.TestGenerator."""
+    def __init__(self, deps, outname, gen):
+        Job.__init__(self, deps)
+        self.outname = outname
+        self.gen = gen
+
+    def run(self):
+        try:
+            with open(self.outname, "w") as outf:
+                self.gen.generate(outf)
+            return True
+        except:
+            self.exc_info = sys.exc_info()
+            return False
 
 if __name__ == '__main__':
     compilers = compiler.find_compilers()

@@ -66,12 +66,7 @@ class TestGenerator(object):
         for b in self.blocks: b.write_cases(outf)
         for b in self.blocks: b.write_tblock_obj(outf)
 
-        outf.write("\nconst vector<const i_tblock*> tblocks = {\n")
+        outf.write("\nconst i_tblock *const tblocks[] = {\n")
         for b in self.blocks: b.write_tblocks_entry(outf)
-        outf.write("};\n")
-
-
-def generate_mod(outf, name, casetype, contents):
-    g = TestGenerator()
-    g.add_module(name, casetype, contents)
-    g.generate(outf)
+        outf.write("};\nconst size_t n_tblocks = "
+                   "sizeof(tblocks) / sizeof(tblocks[0]);")

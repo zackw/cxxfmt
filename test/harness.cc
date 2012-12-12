@@ -14,9 +14,6 @@ using std::cout;
 using std::endl;
 using fmt::format;
 
-#define S(x) S_(x)
-#define S_(x) #x
-
 namespace {
 
 // Note: we intentionally use std::endl instead of '\n' to get cout
@@ -43,8 +40,9 @@ report(string const& label, const char *spec,
        string const& got, const char *expected)
 {
   if (got == expected) {
-    cout << "+\t" << label << '\t' << spec << '\t'
-         << expected << endl;
+    if (0)
+      cout << "+\t" << label << '\t' << spec << '\t'
+           << expected << endl;
   } else {
     cout << "-\t" << label << '\t' << spec << '\t'
          << expected << '\t' << got << endl;
@@ -95,10 +93,12 @@ private:
 int
 main()
 {
-  const char compiler[] = S(COMPILER_NAME);
+#ifndef COMPILER_NAME
+#define COMPILER_NAME "unknown"
+#endif
 
-  for (auto p = tblocks.begin(); p != tblocks.end(); p++)
-    (**p)(compiler);
+  for (size_t i = 0; i < n_tblocks; i++)
+    (*tblocks[i])(COMPILER_NAME);
   return 0;
 }
 
