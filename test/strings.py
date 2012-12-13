@@ -19,35 +19,32 @@ aligns = [ '', '<', '>', '^', 'L<', 'R>', 'C^' ]
 maxw = len(words) + 3
 
 def output(spec, val):
+    spec = '{:' + spec + '}'
     return '"{}", "{}", "{}"'.format(spec, spec.format(val), val)
 
 def g_simple():
-    for w in words:
+    for r in words:
         for a in aligns:
-            yield output('{:'+a+'}', w)
+            yield output(a, r)
 
 def g_width():
-    for width in xrange(1, maxw):
-        formats = ['{{:{}{}}}'.format(a, width) for a in aligns]
-        for w in words:
-            for f in formats:
-                yield output(f,w)
+    for r in words:
+        for w in xrange(1, maxw):
+            for a in aligns:
+                yield output('{}{}'.format(a, w), r)
 
 def g_prec():
-    for prec in xrange(maxw):
-        formats = ['{{:{}.{}}}'.format(a, prec) for a in aligns]
-        for w in words:
-            for f in formats:
-                yield output(f,w)
+    for r in words:
+        for p in xrange(maxw):
+            for a in aligns:
+                yield output('{}.{}'.format(a, p), r)
 
 def g_wnp():
-    for width in xrange(1, maxw):
-        for prec in xrange(maxw):
-            formats = ['{{:{}{}.{}}}'.format(a, width, prec) for a in aligns]
-            for w in words:
-                for f in formats:
-                    yield output(f,w)
-
+    for r in words:
+        for w in xrange(1, maxw):
+            for p in xrange(maxw):
+                for a in aligns:
+                    yield output('{}{}.{}'.format(a, w, p), r)
 
 def main():
     gen = generator.TestGenerator()
