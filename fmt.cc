@@ -440,34 +440,17 @@ do_numeric_format(T val, const format_spec &spec,
   ostringstream os;
   os.exceptions(ios_base::failbit|ios_base::badbit|ios_base::eofbit);
 
-  if (spec.has_precision)
-    os.precision(spec.precision);
-  if (spec.alternate_form)
-    os.setf(ios_base::showpoint); // we do showbase ourselves
-
-  // "general" style is the default
-  if (type == 'e' || type == 'E') {
-    os.setf(ios_base::scientific, ios_base::floatfield);
-  } else if (type == 'f' || type == 'F') {
-    os.setf(ios_base::fixed, ios_base::floatfield);
-  }
-
-  // decimal is the default
-  if (type == 'o') {
-    os.setf(ios_base::oct, ios_base::basefield);
-  } else if (type == 'x' || type == 'X') {
-    os.setf(ios_base::hex, ios_base::basefield);
-  }
-
-  if (type == 'E' || type == 'F' || type == 'G' || type == 'X') {
-    os.setf(ios_base::uppercase);
-  }
-
   // iostreams can mark positive values with '+' but not with a space,
   // so we do it ourselves in both cases
-
-  if (!is_negative(val) && spec.sign != '-')
+  // Python prints negative hex/oct numbers as a minus sign followed
+  // by the absolute value, iostreams coerces to unsigned; I think the
+  // Python behavior is more useful
+  if (is_negative(val)) {
+    os << '-';
+    val = -val;
+  } else if (spec.sign != '-') {
     os << spec.sign;
+  }
 
   // iostreams 'o' alternate form is '0nnnn' not '0onnnn'
   if (spec.alternate_form) {
@@ -478,6 +461,26 @@ do_numeric_format(T val, const format_spec &spec,
     else if (type == 'X')
       os << "0X";
   }
+
+  if (spec.has_precision)
+    os.precision(spec.precision);
+  if (spec.alternate_form)
+    os.setf(ios_base::showpoint); // we do showbase ourselves
+
+  // "general" style is the default
+  if (type == 'e' || type == 'E')
+    os.setf(ios_base::scientific, ios_base::floatfield);
+  else if (type == 'f' || type == 'F')
+    os.setf(ios_base::fixed, ios_base::floatfield);
+
+  // decimal is the default
+  if (type == 'o')
+    os.setf(ios_base::oct, ios_base::basefield);
+  else if (type == 'x' || type == 'X')
+    os.setf(ios_base::hex, ios_base::basefield);
+
+  if (type == 'E' || type == 'F' || type == 'G' || type == 'X')
+    os.setf(ios_base::uppercase);
 
   os << val;
 
@@ -685,15 +688,12 @@ formatter::format_sub(size_t i, long long val) noexcept
         break;
 
       case 'd':
-      default:
-        do_format_signed_int(val, *spec, segs.at(spec->target));
-        break;
-
       case 'u':
       case 'o':
       case 'x':
       case 'X':
-        do_format_unsigned_int(val, *spec, segs.at(spec->target));
+      default:
+        do_format_signed_int(val, *spec, segs.at(spec->target));
         break;
       }
 
@@ -733,9 +733,6 @@ formatter::format_sub(size_t i, unsigned long long val) noexcept
         break;
 
       case 'd':
-        do_format_signed_int(val, *spec, segs.at(spec->target));
-        break;
-
       case 'u':
       case 'o':
       case 'x':

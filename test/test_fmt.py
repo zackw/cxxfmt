@@ -10,26 +10,13 @@
 # and run the result.  The output of that program should be
 # self-explanatory.
 
-# The only function of TestMeta is to put all TestBlock subclasses in
-# a big list so that TestBlock.all_blocks() works without further
-# annotation.
-
-class TestMeta(type):
-    def __new__(mcs, name, bases, dict_):
-        annotated = False
-        if '__metaclass__' in dict_:
-            dict_['subclasses'] = []
-            annotated = True
-        cls = type.__new__(mcs, name, bases, dict_)
-        if not annotated:
-            if hasattr(bases[0], 'subclasses'):
-                bases[0].subclasses.append(cls)
-            else:
-                raise TypeError("cannot find where to record " + repr(name))
-        return cls
+def walk_subclasses(cls):
+    for sub in cls.__subclasses__():
+        yield sub
+        for ss in walk_subclasses(sub):
+            yield ss
 
 class TestBlock(object):
-    __metaclass__ = TestMeta
 
     def __init__(self, group, name, casetype, generator):
         self.group = group
@@ -71,7 +58,7 @@ class TestBlock(object):
     @classmethod
     def all_blocks(cls):
         blocks = []
-        for sub in cls.subclasses:
+        for sub in walk_subclasses(cls):
             blocks.extend(sub.group_for_class())
         blocks.sort()
         return blocks
@@ -139,6 +126,87 @@ class test_string(TestBlock):
                     for a in self.aligns:
                         yield self.output('{}{}.{}'.format(a, w, p), r)
 
+# Helpers for the next few classes.
+def fib(n):
+    if n < 0: raise ValueError("fib() defined only for nonnegative n")
+    # 0, 1 handled separately because we don't want the double 1 from the
+    # usual fibonacci sequence.
+    if n > 0: yield 0
+    if n > 1: yield 1
+    a, b = 2, 1
+    while a < n:
+        yield a
+        a, b = a+b, a
+
+def integer_test_cases(limit, any_negative):
+    numbers = [2**i for i in xrange(limit)]
+    # The square brackets on the next line prevent an infinite loop.
+    numbers.extend([i-1 for i in numbers])
+    numbers.extend(fib(max(numbers)))
+    if any_negative:
+        numbers.extend([-i for i in numbers])
+
+    # remove duplicates
+    numbers = list(set(numbers))
+
+    # 0, 1, -1, ...
+    numbers.sort(key=lambda x: abs(x) + (0.5 if x<0 else 0))
+    return numbers
+
+class test_sint(TestBlock):
+    casetype = '1arg_i'
+
+    @staticmethod
+    def output(spec, val):
+        spec = '{:' + spec + '}'
+        return '"{}", "{}", {}'.format(spec, spec.format(val), val)
+
+    def g_simple(self):
+        aligns = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
+        types  = [ '', 'd', 'o', 'x' ]
+        signs  = [ '', '+', '-', ' ' ]
+        mods   = [ '', '0', '#', '#0' ]
+        widths = [ '', '6', '12' ]
+
+        for n in integer_test_cases(31, True):
+            for a in aligns:
+                for s in signs:
+                    for m in mods:
+                        for w in widths:
+                            for t in types:
+                                # Python allows these combinations,
+                                # fmt.cc doesn't.
+                                if '0' in m and a != '':
+                                    continue
+                                yield self.output(a+s+m+w+t, n)
+
+class test_uint(TestBlock):
+    casetype = '1arg_ui'
+
+    @staticmethod
+    def output(spec, val):
+        spec = '{:' + spec + '}'
+        return '"{}", "{}", {}'.format(spec, spec.format(val), val)
+
+    def g_simple(self):
+        aligns = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
+        types  = [ '', 'd', 'o', 'x' ]
+        signs  = [ '', '+', '-', ' ' ]
+        mods   = [ '', '0', '#', '#0' ]
+        widths = [ '', '6', '12' ]
+
+        for n in integer_test_cases(32, False):
+            for a in aligns:
+                for s in signs:
+                    for m in mods:
+                        for w in widths:
+                            for t in types:
+                                # Python allows these combinations,
+                                # fmt.cc doesn't.
+                                if '0' in m and a != '':
+                                    continue
+                                yield self.output(a+s+m+w+t, n)
+
 skeleton_top = r"""// Tester for cxxfmt.
 
 // Copyright 2012 Zachary Weinberg <zackw@panix.com>.
@@ -178,6 +246,20 @@ struct case_1arg_s
   const char *spec;
   const char *expected;
   const char *val;
+};
+
+struct case_1arg_i
+{
+  const char *spec;
+  const char *expected;
+  int val;
+};
+
+struct case_1arg_ui
+{
+  const char *spec;
+  const char *expected;
+  unsigned int val;
 };
 
 // more case_ structures here
