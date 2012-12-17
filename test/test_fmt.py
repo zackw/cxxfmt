@@ -10,19 +10,39 @@
 # and run the result.  The output of that program should be
 # self-explanatory.
 
+# The only function of TestMeta is to put all TestBlock subclasses in
+# a big list so that TestBlock.all_blocks() works without further
+# annotation.
+
+class TestMeta(type):
+    def __new__(mcs, name, bases, dict_):
+        annotated = False
+        if '__metaclass__' in dict_:
+            dict_['subclasses'] = []
+            annotated = True
+        cls = type.__new__(mcs, name, bases, dict_)
+        if not annotated:
+            if hasattr(bases[0], 'subclasses'):
+                bases[0].subclasses.append(cls)
+            else:
+                raise TypeError("cannot find where to record " + repr(name))
+        return cls
+
 class TestBlock(object):
-    def __init__(self, mod, name, casetype, generator):
-        self.mod = mod
+    __metaclass__ = TestMeta
+
+    def __init__(self, group, name, casetype, generator):
+        self.group = group
         self.name = name
         self.casetype = casetype
         self.generator = generator
 
     def __cmp__(self, other):
-        # primary sort alpha by module
-        if self.mod < other.mod: return -1
-        if self.mod > other.mod: return 1
+        # primary sort alpha by group
+        if self.group < other.group: return -1
+        if self.group > other.group: return 1
 
-        # sort any block named 'simple' to the top within its module
+        # sort any block named 'simple' to the top within its group
         if self.name == "simple" and other.name != "simple": return -1
         if self.name != "simple" and other.name == "simple": return 1
 
@@ -31,6 +51,31 @@ class TestBlock(object):
         if self.name > other.name: return 1
         return 0
 
+    @classmethod
+    def group_for_class(cls):
+        casetype = getattr(cls, 'casetype', None)
+        if casetype is None:
+            raise TypeError("class '{}' lacks a casetype annotation"
+                            .format(cls.__name__))
+        if not casetype.startswith('case_'):
+            casetype = 'case_' + casetype
+
+        group = cls.__name__
+        if group.startswith('test_'):
+            group = group[5:]
+
+        return [cls(group, name[2:], casetype, fn)
+                for (name, fn) in vars(cls).iteritems()
+                if callable(fn) and name.startswith('g_')]
+
+    @classmethod
+    def all_blocks(cls):
+        blocks = []
+        for sub in cls.subclasses:
+            blocks.extend(sub.group_for_class())
+        blocks.sort()
+        return blocks
+
     def emit(self, pattern, outf=None):
         txt = pattern.format(**vars(self))
         if outf is not None:
@@ -38,83 +83,61 @@ class TestBlock(object):
         return txt
 
     def fullname(self):
-        return self.emit("{mod}.{name}")
+        return self.emit("{group}.{name}")
 
     def write_cases(self, outf):
-        self.emit("const {casetype} {mod}_{name}[] = {{\n", outf)
-        for case in self.generator():
+        self.emit("const {casetype} {group}_{name}[] = {{\n", outf)
+        for case in self.generator(self):
             outf.write("  { " + case + " },\n")
         outf.write("};\n\n")
 
     def write_tblock_obj(self, outf):
         self.emit("const tblock<{casetype}> "
-                  "{mod}_{name}_b(\"{mod}.{name}\", {mod}_{name});\n", outf)
+                  "{group}_{name}_b(\"{group}.{name}\", "
+                  "{group}_{name});\n", outf)
 
     def write_tblocks_entry(self, outf):
-        self.emit("  &{mod}_{name}_b,\n", outf)
+        self.emit("  &{group}_{name}_b,\n", outf)
 
-class TestGenerator(object):
-    def __init__(self):
-        self.blocks = []
-        self.duplicate_preventer = set()
+class test_string(TestBlock):
+    casetype = '1arg_s'
 
-    def add_block(self, block):
-        f = block.fullname()
-        if f in self.duplicate_preventer:
-            raise KeyError(f + " already registered")
-        self.blocks.append(block)
-        self.duplicate_preventer.add(f)
+    words = [ '', 'i', 'of', 'sis', 'fice', 'drisk', 'elanet', 'hippian',
+              'botanist', 'synaptene', 'cipherhood', 'schizognath' ]
 
-    def add_module(self, name, casetype, contents):
-        for k, v in contents.iteritems():
-            if k.startswith('g_'):
-                self.add_block(TestBlock(name, k[2:], casetype, v))
+    aligns = [ '', '<', '>', '^', 'L<', 'R>', 'C^' ]
 
-    def generate(self, outf):
-        self.blocks.sort()
+    @staticmethod
+    def output(spec, val):
+        spec = '{:' + spec + '}'
+        return '"{}", "{}", "{}"'.format(spec, spec.format(val), val)
 
-        for b in self.blocks: b.write_cases(outf)
-        for b in self.blocks: b.write_tblock_obj(outf)
+    def g_simple(self):
+        for r in self.words:
+            for a in self.aligns:
+                yield self.output(a, r)
 
-        outf.write("\nconst i_tblock *const tblocks[] = {\n")
-        for b in self.blocks: b.write_tblocks_entry(outf)
-        outf.write("};\nconst size_t n_tblocks = "
-                   "sizeof(tblocks) / sizeof(tblocks[0]);")
+    def g_width(self):
+        maxw = len(self.words) + 3
+        for r in self.words:
+            for w in xrange(1, len(self.words) + 3):
+                for a in self.aligns:
+                    yield self.output('{}{}'.format(a, w), r)
 
-words = [ '', 'i', 'of', 'sis', 'fice', 'drisk', 'elanet', 'hippian',
-          'botanist', 'synaptene', 'cipherhood', 'schizognath' ]
+    def g_prec(self):
+        maxw = len(self.words) + 3
+        for r in self.words:
+            for p in xrange(len(self.words) + 3):
+                for a in self.aligns:
+                    yield self.output('{}.{}'.format(a, p), r)
 
-aligns = [ '', '<', '>', '^', 'L<', 'R>', 'C^' ]
-
-maxw = len(words) + 3
-
-def output(spec, val):
-    spec = '{:' + spec + '}'
-    return '"{}", "{}", "{}"'.format(spec, spec.format(val), val)
-
-def g_simple():
-    for r in words:
-        for a in aligns:
-            yield output(a, r)
-
-def g_width():
-    for r in words:
-        for w in xrange(1, maxw):
-            for a in aligns:
-                yield output('{}{}'.format(a, w), r)
-
-def g_prec():
-    for r in words:
-        for p in xrange(maxw):
-            for a in aligns:
-                yield output('{}.{}'.format(a, p), r)
-
-def g_wnp():
-    for r in words:
-        for w in xrange(1, maxw):
-            for p in xrange(maxw):
-                for a in aligns:
-                    yield output('{}{}.{}'.format(a, w, p), r)
+    def g_wnp(self):
+        maxw = len(self.words) + 3
+        for r in self.words:
+            for w in xrange(1, maxw):
+                for p in xrange(maxw):
+                    for a in self.aligns:
+                        yield self.output('{}{}.{}'.format(a, w, p), r)
 
 skeleton_top = r"""// Tester for cxxfmt.
 
@@ -243,11 +266,16 @@ def main(argv, outf):
     if len(argv) > 1:
         outf = open(argv[1], "w")
     with outf:
-        gen = TestGenerator()
-        gen.add_module('strings', 'case_1arg_s', globals())
+        blocks = TestBlock.all_blocks()
 
         outf.write(skeleton_top)
-        gen.generate(outf)
+        for b in blocks: b.write_cases(outf)
+        for b in blocks: b.write_tblock_obj(outf)
+
+        outf.write("\nconst i_tblock *const tblocks[] = {\n")
+        for b in blocks: b.write_tblocks_entry(outf)
+        outf.write("};\nconst size_t n_tblocks = "
+                   "sizeof(tblocks) / sizeof(tblocks[0]);")
         outf.write(skeleton_bot)
 
 if __name__ == '__main__':
