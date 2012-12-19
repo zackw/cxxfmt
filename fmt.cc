@@ -441,7 +441,7 @@ do_numeric_format(T val, const format_spec &spec,
   os.exceptions(ios_base::failbit|ios_base::badbit|ios_base::eofbit);
 
   // iostreams can mark positive values with '+' but not with a space,
-  // so we do it ourselves in both cases
+  // so we do it ourselves in both cases.
   // Python prints negative hex/oct numbers as a minus sign followed
   // by the absolute value, iostreams coerces to unsigned; I think the
   // Python behavior is more useful
@@ -464,14 +464,20 @@ do_numeric_format(T val, const format_spec &spec,
 
   if (spec.has_precision)
     os.precision(spec.precision);
-  if (spec.alternate_form)
-    os.setf(ios_base::showpoint); // we do showbase ourselves
 
-  // "general" style is the default
-  if (type == 'e' || type == 'E')
+  // Python doesn't allow # in floating point format specifications.
+  // Its 'e' and 'f' typecodes always print floating point numbers
+  // with a visible decimal point; 'g' doesn't.  Its behavior for
+  // floating point numbers in the absence of a typecode is not the
+  // same as 'e', 'f', or 'g', and has an asymmetry that makes it hard
+  // to duplicate with iostreams, so we diverge and default to 'g'.
+  if (type == 'e' || type == 'E') {
     os.setf(ios_base::scientific, ios_base::floatfield);
-  else if (type == 'f' || type == 'F')
+    os.setf(ios_base::showpoint);
+  } else if (type == 'f' || type == 'F') {
     os.setf(ios_base::fixed, ios_base::floatfield);
+    os.setf(ios_base::showpoint);
+  }
 
   // decimal is the default
   if (type == 'o')

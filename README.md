@@ -61,6 +61,15 @@ following lacunae:
    at that point.
 4. Pre-format conversions (`!r`, `!s`, etc) are not supported.
 
+and deliberate divergences:
+
+1. `{}` is the same as `{:g}` for floating point types.  Python's
+   behavior in the absence of a typecode does not exactly correspond
+   to 'e', 'f', or 'g' and is impractical to emulate on top of iostreams.
+2. You may not combine the '0' modifier with an explicit alignment
+   specification.  Python allows this but its behavior is internally
+   inconsistent.
+
 Ill-formed format specifications are printed as literal text, but
 surrounded by VT-220 reverse video escapes.
 

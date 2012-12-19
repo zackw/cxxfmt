@@ -163,7 +163,7 @@ class test_sint(TestBlock):
 
     def g_simple(self):
         aligns = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
-        types  = [ '', 'd', 'o', 'x' ]
+        types  = [ '', 'd', 'o', 'x', 'X' ]
         signs  = [ '', '+', '-', ' ' ]
         mods   = [ '', '0', '#', '#0' ]
         widths = [ '', '6', '12' ]
@@ -190,7 +190,7 @@ class test_uint(TestBlock):
 
     def g_simple(self):
         aligns = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
-        types  = [ '', 'd', 'o', 'x' ]
+        types  = [ '', 'd', 'o', 'x', 'X' ]
         signs  = [ '', '+', '-', ' ' ]
         mods   = [ '', '0', '#', '#0' ]
         widths = [ '', '6', '12' ]
@@ -206,6 +206,54 @@ class test_uint(TestBlock):
                                 if '0' in m and a != '':
                                     continue
                                 yield self.output(a+s+m+w+t, n)
+
+class test_float(TestBlock):
+    casetype = '1arg_f'
+
+    @staticmethod
+    def output(val, spec, override_spec=None):
+        spec = '{:' + spec + '}'
+        if override_spec is None:
+            override_spec = spec
+        return '"{}", "{}", {}'.format(spec, override_spec.format(val), val)
+
+    def g_simple(self):
+        aligns = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
+        types  = [ '', 'e', 'f', 'g', 'E', 'F', 'G' ]
+        signs  = [ '', '+', '-', ' ' ]
+        mods   = [ '', '0' ]
+        wnp    = [ '', '6', '12', '.6', '12.6' ]
+
+        # We don't want test cases to depend on rounding behavior,
+        # so we use numbers that are definitely representable in a
+        # short form in both decimal and binary floating point.
+        numbers = [ 0.0 ]
+        for i in range(-5, 21, 2):
+            for j in range(i, i+3):
+                x = 2.0**i + 2.0**j
+                numbers.extend((x,-x))
+        numbers = sorted(set(numbers),
+                         key=lambda x: abs(x) + (1e-20 if x<0 else 0))
+
+        for n in numbers:
+            for a in aligns:
+                for s in signs:
+                    for m in mods:
+                        for w in wnp:
+                            for t in types:
+                                if '0' in m and a != '':
+                                    # Python allows these combinations,
+                                    # fmt.cc doesn't.
+                                    continue
+                                if t == '':
+                                    # Python's no-typecode behavior
+                                    # for floats is not exactly any of
+                                    # 'e', 'f', or 'g', and fmt.cc
+                                    # doesn't mimic it.
+                                    yield self.output(n, a+s+m+w,
+                                                      '{:' + a+s+m+w + 'g}')
+                                else:
+                                    yield self.output(n, a+s+m+w+t)
 
 skeleton_top = r"""// Tester for cxxfmt.
 
@@ -260,6 +308,13 @@ struct case_1arg_ui
   const char *spec;
   const char *expected;
   unsigned int val;
+};
+
+struct case_1arg_f
+{
+  const char *spec;
+  const char *expected;
+  float val;
 };
 
 // more case_ structures here
