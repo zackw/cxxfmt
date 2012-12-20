@@ -10,11 +10,15 @@ import compiler
 import job
 
 def main():
-    gjob = job.RunJob([], ["test/test_fmt.py", "test/test_fmt.cc"])
+    testgen = job.RunJob([job.FileDep("test/test_fmt.py")],
+                         ["test/test_fmt.py", "test/test_fmt.cc"],
+                         output="test/test_fmt.cc")
+    fmtccdep = job.FileDep("fmt.cc")
+    fmthdep  = job.FileDep("fmt.h")
 
     compilers = compiler.find_compilers()
-    cjobs = [ [ job.CompileJob([gjob], cc, "test/test_fmt.cc"),
-                job.CompileJob([], cc, "fmt.cc") ]
+    cjobs = [ [ job.CompileJob([testgen, fmthdep], cc, "test/test_fmt.cc"),
+                job.CompileJob([fmtccdep, fmthdep], cc, "fmt.cc") ]
               for cc in compilers ]
     ljobs = [ job.LinkJob(objs, cc, "fmt")
               for (objs, cc) in zip(cjobs, compilers) ]

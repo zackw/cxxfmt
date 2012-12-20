@@ -5,6 +5,7 @@
 assert __name__ != '__main__'
 from __main__ import verbosity
 
+import errno
 import os
 import os.path
 import subprocess
@@ -20,37 +21,84 @@ class Job(object):
        If a job fails, it is not retried even if it's in some other
        job's dependencies.
 
+       Jobs may or may not produce an 'output', which is a file in the
+       filesystem.  If a job does produce output, and that output is
+       newer (according to os.stat) than the outputs of all its
+       dependencies, then we assume that the job has succeeded already
+       and does not need to be rerun.
+
        A base Job object doesn't do anything when executed other than
        invoke all of its dependencies.  Subclasses can override the
        run() method to do something."""
 
-    def __init__(self, deps):
+    def __init__(self, deps, output=None):
         self.deps   = deps
+        self.output = output
         self.result = None # not yet executed
+        self.mtime_ = None # not yet checked
+
+    def update_mtime(self):
+        if self.output is None: return
+        try:
+            self.mtime_ = os.stat(self.output).st_mtime
+        except OSError, e:
+            if e.errno != errno.ENOENT:
+                raise
+            self.mtime_ = 0 # doesn't exist = out of date
+
+    def mtime(self):
+        if self.output is None: return 0 # no output = always out of date
+        if self.mtime_ is None: self.update_mtime()
+        return self.mtime_
+
+    def uptodate(self):
+        my_mtime = self.mtime()
+        if my_mtime == 0: return False # automatically out of date
+
+        for dep in self.deps:
+            if not dep.uptodate(): return False
+            if my_mtime < dep.mtime(): return False
+
+        return True
 
     def execute(self):
         if self.result is not None:
             return self.result
+        if self.uptodate():
+            self.result = True
+            return True
         for dep in self.deps:
-            result = dep.execute()
-            if result is not True:
-                self.result = result
-                return result
-        result = self.run()
-        self.result = result
-        return result
+            dep_result = dep.execute()
+            if dep_result is not True:
+                self.result = dep_result
+                return dep_result
+        self.result = self.run()
+        if self.result is True: self.update_mtime()
+        return self.result
 
     def run(self):
         return True  # success
+
+class FileDep(Job):
+    """Pseudo-job to model a dependency on a file that is not created
+       through this system.  Cannot itself have dependencies.  If the
+       file doesn't exist, run() just fails."""
+
+    def __init__(self, output):
+        Job.__init__(self, [], output)
+
+    def run(self):
+        sys.stderr.write("*** Don't know how to create {!r}."
+                         .format(self.output))
+        return False
 
 class CompileJob(Job):
     """Job to compile one source file with a specified compiler.
        Dependencies have no particular significance."""
     def __init__(self, deps, cc, src):
-        Job.__init__(self, deps)
         self.cc  = cc
         self.src = src
-        self.obj = cc.objname(src)
+        Job.__init__(self, deps, output=cc.objname(src))
 
     def run(self):
         return self.cc.compile(self.src)
@@ -60,19 +108,18 @@ class LinkJob(Job):
        Each CompileJob in the dependencies contributes its object file
        to the link."""
     def __init__(self, deps, cc, exebase):
-        Job.__init__(self, deps)
         self.cc = cc
         self.exebase = exebase
-        self.exe = cc.exename(exebase)
-        self.objs = [dep.obj for dep in deps if isinstance(dep, CompileJob)]
+        self.objs = [dep.output for dep in deps if isinstance(dep, CompileJob)]
+        Job.__init__(self, deps, output=cc.exename(exebase))
 
     def run(self):
         return self.cc.link(self.objs, self.exebase)
 
 class RunJob(Job):
     """Job to run a program with arguments."""
-    def __init__(self, deps, argv):
-        Job.__init__(self, deps)
+    def __init__(self, deps, argv, output=None):
+        Job.__init__(self, deps, output)
         self.argv = argv
 
     def run(self):
@@ -107,7 +154,7 @@ class TestJob(RunJob):
         exe = None
         for dep in deps:
             if isinstance(dep, LinkJob):
-                exe = dep.exe
+                exe = dep.output
                 break
         if exe is None:
             raise ValueError("no LinkJob in dependencies")
