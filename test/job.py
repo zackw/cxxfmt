@@ -88,7 +88,7 @@ class FileDep(Job):
         Job.__init__(self, [], output)
 
     def run(self):
-        sys.stderr.write("*** Don't know how to create {!r}."
+        sys.stderr.write("*** Don't know how to create {!r}.\n"
                          .format(self.output))
         return False
 
