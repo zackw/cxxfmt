@@ -5,5 +5,3 @@
 *.a
 *.pyc
 *.pyo
-a.out
-/test/testcases.inc
