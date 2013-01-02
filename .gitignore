@@ -7,4 +7,4 @@
 *.pyc
 *.pyo
 /compilers.ini
-/test/test_fmt.cc
+/test_fmt.cc

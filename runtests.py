@@ -1,16 +1,63 @@
-#
-# Compiler invocation
-#
+# Test driver for cxxfmt.
+
+# Copyright 2012, 2013 Zachary Weinberg <zackw@panix.com>.
+# Use, modification, and distribution are subject to the
+# Boost Software License, Version 1.0.  See the file LICENSE
+# or http://www.boost.org/LICENSE_1_0.txt for detailed terms.
 
 import ConfigParser
+import contextlib
+import errno
 import itertools
 import json
 import os
 import os.path
 import subprocess
 import sys
+import tempfile
 
-import util
+#
+# Utility functions
+#
+
+@contextlib.contextmanager
+def mkstemp_autodel(suffix="", prefix="tmp", dir=None, text=False,
+                    contents=None):
+    pathname = None
+    try:
+        (handle, pathname) = tempfile.mkstemp(suffix, prefix, dir, text)
+        if contents is not None:
+            os.write(handle, contents)
+        os.close(handle)
+        yield pathname
+    finally:
+        if pathname is not None:
+            try:
+                os.unlink(pathname)
+            except OSError, e:
+                if e.errno != errno.ENOENT:
+                    raise
+
+# credit to stackoverflow user 'Obtuse':
+# http://stackoverflow.com/a/6849299/388520
+class lazy_property(object):
+    """Decorator for an attribute whose value is to be lazily computed
+       on first use.  Apply to a method which computes the value.
+       Overwrites itself with the computed value upon invocation."""
+
+    def __init__(self, fget):
+        self.__func__ = fget
+        self.__name__ = fget.__name__
+
+    def __get__(self, obj, cls):
+        if obj is None:
+            obj = cls
+        value = self.__func__(obj)
+        setattr(obj, self.__name__, value)
+        return value
+#
+# Compiler invocation
+#
 
 class CompilerTraits(object):
     """Interface for traits classes that describe the peculiarities of
@@ -121,14 +168,14 @@ class Compiler(object):
         return self.invoke(self.traits.link_cmd(objs, self.libs, exe),
                            exe, verbose)
 
-    @util.lazy_property
+    @lazy_property
     def DEVNULL(_):
         """Read-write file handle on /dev/null.  If possible,
            delegates to subprocess; otherwise opens a global handle on
            os.devnull itself.  If possible, that handle is marked
            close-on-exec.
 
-           N.B. this is not in 'util' because descriptors do not apply
+           N.B. this is not a global because descriptors do not apply
            to lookups in module objects, and thus @lazy_property does
            not work in that context."""
         try:
@@ -149,8 +196,6 @@ class Compiler(object):
            'label' is used when verbose=1 to describe this invocation.
            Returns True for a successful compilation, False otherwise.
         """
-        if verbose is None:
-            verbose = verbosity
         if verbose < 0 or verbose > 2:
             raise ValueError("bad verbosity {}".format(verbose))
 
@@ -221,10 +266,10 @@ class Compiler(object):
     @classmethod
     def identify_source(cls):
         if cls._identify_source is None:
-            cls._identify_source_gen = util.mkstemp_autodel(suffix=".cc",
-                                                            prefix="id-",
-                                                            text=True,
-                                                            contents=r"""
+            cls._identify_source_gen = mkstemp_autodel(suffix=".cc",
+                                                       prefix="id-",
+                                                       text=True,
+                                                       contents=r"""
 // Thanks largely to the clown show that is MacPorts, we have to
 // compile and run a test program to make absolutely sure that the
 // particular combination of compiler and library we're trying
@@ -289,7 +334,7 @@ int main()
            an absolute pathname to an executable."""
 
         source = cls.identify_source()
-        with util.mkstemp_autodel(suffix=".exe", prefix="id-") as exe:
+        with mkstemp_autodel(suffix=".exe", prefix="id-") as exe:
             try:
                 # This is how g++ and clang++ want to be invoked.
                 argv = [prog] + extra_args + ["-o", exe, source]
@@ -401,16 +446,197 @@ def find_compilers(candidates, verbose):
     Compiler.save_compilers(compilers, "compilers.ini")
     return compilers
 
-if __name__ == '__main__':
-    def main():
-        verbose = 0
-        args = sys.argv[1:]
-        while len(args) > 0 and args[0] == '-v':
+#
+# Test jobs and their interdependencies.
+#
+
+class Job(object):
+    """Base class for test jobs.  A job is executed at most once, and
+       execution either succeeds or fails.  Jobs depend on other jobs;
+       a job cannot execute until all of its dependencies succeed.
+       If a job fails, it is not retried even if it's in some other
+       job's dependencies.
+
+       Jobs may or may not produce an 'output', which is a file in the
+       filesystem.  If a job does produce output, and that output is
+       newer (according to os.stat) than the outputs of all its
+       dependencies, then we assume that the job has succeeded already
+       and does not need to be rerun.
+
+       A base Job object doesn't do anything when executed other than
+       invoke all of its dependencies.  Subclasses can override the
+       run() method to do something."""
+
+    def __init__(self, verbose, deps, output=None):
+        self.deps    = deps
+        self.output  = output
+        self.verbose = verbose
+        self.result  = None # not yet executed
+        self.mtime_  = None # not yet checked
+
+    def update_mtime(self):
+        if self.output is None: return
+        try:
+            self.mtime_ = os.stat(self.output).st_mtime
+        except OSError, e:
+            if e.errno != errno.ENOENT:
+                raise
+            self.mtime_ = 0 # doesn't exist = out of date
+
+    def mtime(self):
+        if self.output is None: return 0 # no output = always out of date
+        if self.mtime_ is None: self.update_mtime()
+        return self.mtime_
+
+    def uptodate(self):
+        my_mtime = self.mtime()
+        if my_mtime == 0: return False # automatically out of date
+
+        for dep in self.deps:
+            if not dep.uptodate(): return False
+            if my_mtime < dep.mtime(): return False
+
+        return True
+
+    def execute(self):
+        if self.result is not None:
+            return self.result
+        if self.uptodate():
+            self.result = True
+            return True
+        for dep in self.deps:
+            dep_result = dep.execute()
+            if dep_result is not True:
+                self.result = dep_result
+                return dep_result
+        self.result = self.run()
+        if self.result is True: self.update_mtime()
+        return self.result
+
+    def run(self):
+        return True  # success
+
+class FileDep(Job):
+    """Pseudo-job to model a dependency on a file that is not created
+       through this system.  Cannot itself have dependencies.  If the
+       file doesn't exist, run() just fails."""
+
+    def __init__(self, output):
+        Job.__init__(self, 0, [], output)
+
+    def run(self):
+        sys.stderr.write("*** Don't know how to create {!r}.\n"
+                         .format(self.output))
+        return False
+
+class CompileJob(Job):
+    """Job to compile one source file with a specified compiler.
+       Dependencies have no particular significance."""
+    def __init__(self, verbose, deps, cc, src):
+        self.cc  = cc
+        self.src = src
+        Job.__init__(self, verbose, deps, output=cc.objname(src))
+
+    def run(self):
+        return self.cc.compile(self.src)
+
+class LinkJob(Job):
+    """Job to link one or more object files with a specified compiler.
+       Each CompileJob in the dependencies contributes its object file
+       to the link."""
+    def __init__(self, verbose, deps, cc, exebase):
+        self.cc = cc
+        self.exebase = exebase
+        self.objs = [dep.output for dep in deps if isinstance(dep, CompileJob)]
+        Job.__init__(self, verbose, deps, output=cc.exename(exebase))
+
+    def run(self):
+        return self.cc.link(self.objs, self.exebase)
+
+class RunJob(Job):
+    """Job to run a program with arguments."""
+    def __init__(self, verbose, deps, argv, output=None):
+        Job.__init__(self, verbose, deps, output)
+        self.argv = argv
+
+    def run(self):
+        if self.argv[0].endswith(".py"):
+            argv = [sys.executable] + self.argv
+        else:
+            argv = self.argv
+
+        if self.verbose == 1:
+            sys.stderr.write(self.argv[0] + "...")
+        elif self.verbose == 2:
+            sys.stderr.write(" ".join(argv) + "\n")
+
+        rv = subprocess.call(argv)
+        self.exitcode = rv
+        if rv == 0:
+            if self.verbose == 1:
+                sys.stderr.write("ok\n")
+            return True
+        if verbosity > 0:
+            if rv < 0:
+                sys.stderr.write("signal {}\n".format(-rv))
+            else:
+                sys.stderr.write("exit {}\n".format(rv))
+        return False
+
+class TestJob(RunJob):
+    """Job to run a test program, namely the program generated by the
+       first LinkJob in the dependencies. 'args' can be used to specify
+       extra arguments to this program."""
+    def __init__(self, verbose, deps, args=[]):
+        exe = None
+        for dep in deps:
+            if isinstance(dep, LinkJob):
+                exe = dep.output
+                break
+        if exe is None:
+            raise ValueError("no LinkJob in dependencies")
+
+        if verbose >= 2:
+            if len(args) >= 1 and args[-1] == "-q":
+                args.pop()
+            else:
+                args.append("-v")
+
+        RunJob.__init__(self, verbose, deps, [os.path.join(".", exe)] + args)
+
+#
+# In-tree main test driver.
+#
+
+def main():
+    verbose = 1
+    args = sys.argv[1:]
+    if len(args) > 0:
+        if args[0] == '-v':
             verbose += 1
             args.pop(0)
-        if len(args) == 0:
-            args = ["g++", "clang++"]
+        elif args[0] == '-q':
+            verbose -= 1
+            args.pop(0)
 
-        compilers = Compiler.probe_compilers(args, verbose)
-        Compiler.save_compilers(compilers, "compilers.ini")
-    main()
+    compilers = find_compilers(args, verbose)
+
+    testgen = RunJob(verbose,
+                     [FileDep("test_fmt_gen.py")],
+                     ["test_fmt_gen.py", "test_fmt.cc"],
+                     output="test_fmt.cc")
+    fmtccdep = FileDep("fmt.cc")
+    fmthdep  = FileDep("fmt.h")
+
+    cjobs = [ [ CompileJob(verbose, [testgen, fmthdep], cc, "test_fmt.cc"),
+                CompileJob(verbose, [fmtccdep, fmthdep], cc, "fmt.cc") ]
+              for cc in compilers ]
+    ljobs = [ LinkJob(verbose, objs, cc, "test_fmt")
+              for (objs, cc) in zip(cjobs, compilers) ]
+    tjobs = [ TestJob(verbose, [ljob], ["-q"])
+              for ljob in ljobs ]
+
+    all = Job(verbose, tjobs)
+    all.execute()
+
+main()
