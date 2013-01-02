@@ -1,4 +1,4 @@
-# Test generator for cxxfmt.
+#! /usr/bin/python
 
 # Copyright 2012 Zachary Weinberg <zackw@panix.com>.
 # Use, modification, and distribution are subject to the
@@ -9,6 +9,8 @@
 # You need to compile its output, compile fmt.cc, link them together,
 # and run the result.  The output of that program should be
 # self-explanatory.
+
+import sys
 
 def walk_subclasses(cls):
     for sub in cls.__subclasses__():
@@ -399,9 +401,12 @@ main(int argc, char **argv)
 }
 """
 
-def main(argv, outf):
-    if len(argv) > 1:
-        outf = open(argv[1], "w")
+def main():
+    if len(sys.argv) > 1:
+        outf = open(sys.argv[1], "w")
+    else:
+        outf = sys.stdout
+
     with outf:
         blocks = TestBlock.all_blocks()
 
@@ -415,6 +420,5 @@ def main(argv, outf):
                    "sizeof(tblocks) / sizeof(tblocks[0]);")
         outf.write(skeleton_bot)
 
-if __name__ == '__main__':
-    import sys
-    main(sys.argv, sys.stdout)
+assert __name__ == '__main__'
+main()

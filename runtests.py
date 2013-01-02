@@ -1,14 +1,23 @@
-# Test driver for cxxfmt.
+#! /usr/bin/python
 
 # Copyright 2012, 2013 Zachary Weinberg <zackw@panix.com>.
 # Use, modification, and distribution are subject to the
 # Boost Software License, Version 1.0.  See the file LICENSE
 # or http://www.boost.org/LICENSE_1_0.txt for detailed terms.
 
+# This program will compile cxxfmt once for each compiler you like and
+# test the results. List compilers to use on the command line; if none
+# are given it will default to whatever you used the last time, or as
+# an ultimate default, "g++" and "clang++".  If a compiler appears to
+# be LLVM, it is tested with and without "-stdlib=libc++".  Compilers
+# with inadequate or broken C++11 support are automatically skipped.
+#
+# Currently does not know how to invoke compilers that don't conform
+# to the Unix "cc" command line convention (most significantly, MSVC++)
+
 import ConfigParser
 import contextlib
 import errno
-import itertools
 import json
 import os
 import os.path
@@ -639,4 +648,5 @@ def main():
     all = Job(verbose, tjobs)
     all.execute()
 
+assert __name__ == '__main__'
 main()
