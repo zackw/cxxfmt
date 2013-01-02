@@ -585,7 +585,7 @@ class RunJob(Job):
             if self.verbose == 1:
                 sys.stderr.write("ok\n")
             return True
-        if verbosity > 0:
+        if self.verbose > 0:
             if rv < 0:
                 sys.stderr.write("signal {}\n".format(-rv))
             else:
