@@ -3,5 +3,8 @@
 *~
 *.o
 *.a
+*.x
 *.pyc
 *.pyo
+/compilers.ini
+/test/test_fmt.cc
