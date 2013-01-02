@@ -1,6 +1,6 @@
 #! /usr/bin/python
 
-# Copyright 2012 Zachary Weinberg <zackw@panix.com>.
+# Copyright 2012, 2013 Zachary Weinberg <zackw@panix.com>.
 # Use, modification, and distribution are subject to the
 # Boost Software License, Version 1.0.  See the file LICENSE
 # or http://www.boost.org/LICENSE_1_0.txt for detailed terms.
@@ -10,7 +10,9 @@
 # and run the result.  The output of that program should be
 # self-explanatory.
 
+import math
 import sys
+import textwrap
 
 def walk_subclasses(cls):
     for sub in cls.__subclasses__():
@@ -75,10 +77,16 @@ class TestBlock(object):
         return self.emit("{group}.{name}")
 
     def write_cases(self, outf):
+        comment = ", ".join(str(s) for s in self.basecases())
+        outf.write(textwrap.fill(comment,
+                                 initial_indent="// ",
+                                 subsequent_indent="// ") + "\n")
         self.emit("const {casetype} {group}_{name}[] = {{\n", outf)
+        count = 0
         for case in self.generator(self):
             outf.write("  { " + case + " },\n")
-        outf.write("};\n\n")
+            count += 1
+        outf.write("}};\n// {} cases\n\n".format(count))
 
     def write_tblock_obj(self, outf):
         self.emit("const tblock<{casetype}> "
@@ -101,62 +109,76 @@ class test_string(TestBlock):
         spec = '{:' + spec + '}'
         return '"{}", "{}", "{}"'.format(spec, spec.format(val), val)
 
+    @classmethod
+    def basecases(cls):
+        return ["'{}'".format(w) for w in cls.words]
+
     def g_simple(self):
+        maxw = len(self.words) + 3
+
         for r in self.words:
             for a in self.aligns:
                 yield self.output(a, r)
 
-    def g_width(self):
-        maxw = len(self.words) + 3
-        for r in self.words:
-            for w in xrange(1, len(self.words) + 3):
-                for a in self.aligns:
+                for w in xrange(1, maxw, 3):
                     yield self.output('{}{}'.format(a, w), r)
 
-    def g_prec(self):
-        maxw = len(self.words) + 3
-        for r in self.words:
-            for p in xrange(len(self.words) + 3):
-                for a in self.aligns:
+                for p in xrange(0, maxw, 3):
                     yield self.output('{}.{}'.format(a, p), r)
 
-    def g_wnp(self):
-        maxw = len(self.words) + 3
-        for r in self.words:
-            for w in xrange(1, maxw):
-                for p in xrange(maxw):
-                    for a in self.aligns:
+                for w in xrange(1, maxw, 3):
+                    for p in xrange(0, maxw, 3):
                         yield self.output('{}{}.{}'.format(a, w, p), r)
 
-# Helpers for the next few classes.
-def fib(n):
-    if n < 0: raise ValueError("fib() defined only for nonnegative n")
-    # 0, 1 handled separately because we don't want the double 1 from the
-    # usual fibonacci sequence.
-    if n > 0: yield 0
-    if n > 1: yield 1
-    a, b = 2, 1
-    while a < n:
-        yield a
-        a, b = a+b, a
+# Helpers for the next several classes.  We want to test only a few
+# numbers, because there are so many modifier combinations to work
+# through for each (~2000 for integers, ~2500 for floats) so we could
+# easily end up with hundreds of thousands of subtests if we didn't
+# watch it, and then the generated test program would take ages to
+# compile.  But we want to make sure we hit lots of "interesting"
+# numeric thresholds.  For floating point, we also need to make sure
+# that tests do not depend on Python's very sophisticated
+# floating-point-to-decimal conversion algorithm, which guarantees to
+# print the shortest decimal number that rounds to the IEEE double it
+# began with (as modified by the format spec); your C++ library probably
+# does not make the same guarantee.
 
 def integer_test_cases(limit, any_negative):
-    numbers = [2**i for i in xrange(limit)]
+    numbers = [ 1, 128, 256, 32768, 65536, 2**31, 2**32, 2**63, 2**64 ]
     # The square brackets on the next line prevent an infinite loop.
     numbers.extend([i-1 for i in numbers])
-    numbers.extend(fib(max(numbers)))
+
     if any_negative:
         numbers.extend([-i for i in numbers])
+        numbers = [i for i in numbers if -(limit/2) <= i <= limit/2 - 1]
+    else:
+        numbers = [i for i in numbers if i <= limit - 1]
 
-    # remove duplicates
-    numbers = list(set(numbers))
-
-    # 0, 1, -1, ...
-    numbers.sort(key=lambda x: abs(x) + (0.5 if x<0 else 0))
+    # remove duplicates and sort into order 0, 1, -1, ...
+    numbers = sorted(set(numbers),
+                     key=lambda x: (abs(x), 0 if x>=0 else 1))
     return numbers
+
+def float_test_cases():
+        numbers = [ 0.0, 1.0, 2.0, 0.5, 4.0, 0.25, 8.0, 0.125,
+                    2**19, 2**20,   # bracket {:g} switch to exponential
+                    2**-13, 2**-14, # same
+                  ]
+        numbers.extend([i+1 for i in numbers])
+        numbers.extend([-i for i in numbers])
+
+        return sorted(set(numbers),
+                      key=lambda x: (abs(math.frexp(x)[1]),
+                                     abs(x),
+                                     0 if x>=0 else 1))
+
 
 class test_sint(TestBlock):
     casetype = '1arg_i'
+
+    @staticmethod
+    def basecases():
+        return integer_test_cases(2**32, True)
 
     @staticmethod
     def output(spec, val):
@@ -170,7 +192,7 @@ class test_sint(TestBlock):
         mods   = [ '', '0', '#', '#0' ]
         widths = [ '', '6', '12' ]
 
-        for n in integer_test_cases(31, True):
+        for n in self.basecases():
             for a in aligns:
                 for s in signs:
                     for m in mods:
@@ -186,6 +208,10 @@ class test_uint(TestBlock):
     casetype = '1arg_ui'
 
     @staticmethod
+    def basecases():
+        return integer_test_cases(2**32, False)
+
+    @staticmethod
     def output(spec, val):
         spec = '{:' + spec + '}'
         return '"{}", "{}", {}'.format(spec, spec.format(val), val)
@@ -197,7 +223,7 @@ class test_uint(TestBlock):
         mods   = [ '', '0', '#', '#0' ]
         widths = [ '', '6', '12' ]
 
-        for n in integer_test_cases(32, False):
+        for n in self.basecases():
             for a in aligns:
                 for s in signs:
                     for m in mods:
@@ -213,10 +239,17 @@ class test_float(TestBlock):
     casetype = '1arg_f'
 
     @staticmethod
+    def basecases():
+        return ['{:g}'.format(x) for x in float_test_cases()]
+
+    @staticmethod
     def output(val, spec, override_spec=None):
         spec = '{:' + spec + '}'
         if override_spec is None:
             override_spec = spec
+        else:
+            override_spec = '{:' + override_spec + '}'
+
         return '"{}", "{}", {}'.format(spec, override_spec.format(val), val)
 
     def g_simple(self):
@@ -226,18 +259,7 @@ class test_float(TestBlock):
         mods   = [ '', '0' ]
         wnp    = [ '', '6', '12', '.6', '12.6' ]
 
-        # We don't want test cases to depend on rounding behavior,
-        # so we use numbers that are definitely representable in a
-        # short form in both decimal and binary floating point.
-        numbers = [ 0.0 ]
-        for i in range(-5, 21, 2):
-            for j in range(i, i+3):
-                x = 2.0**i + 2.0**j
-                numbers.extend((x,-x))
-        numbers = sorted(set(numbers),
-                         key=lambda x: abs(x) + (1e-20 if x<0 else 0))
-
-        for n in numbers:
+        for n in float_test_cases():
             for a in aligns:
                 for s in signs:
                     for m in mods:
@@ -252,8 +274,7 @@ class test_float(TestBlock):
                                     # for floats is not exactly any of
                                     # 'e', 'f', or 'g', and fmt.cc
                                     # doesn't mimic it.
-                                    yield self.output(n, a+s+m+w,
-                                                      '{:' + a+s+m+w + 'g}')
+                                    yield self.output(n, a+s+m+w, a+s+m+w+'g')
                                 else:
                                     yield self.output(n, a+s+m+w+t)
 
