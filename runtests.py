@@ -72,11 +72,9 @@ class CompilerTraits(object):
     """Interface for traits classes that describe the peculiarities of
        a particular family of compilers."""
 
-    def compile_cmd(self, src, obj, tag):
+    def compile_cmd(self, src, obj):
         """Return an argument vector which will compile source file
-           'src' into object file 'obj', with COMPILER_NAME defined as
-           a preprocessor macro which expands to a string constant whose
-           contents are 'tag'."""
+           'src' into object file 'obj'."""
         raise NotImplemented
 
     def link_cmd(self, objs, libs, exe):
@@ -99,9 +97,8 @@ class CompilerTraits(object):
 class CT_Unix(CompilerTraits):
     """A compiler whose command line conforms to Unixy conventions."""
 
-    def compile_cmd(self, src, obj, tag):
-        DCOMPILER_NAME = "-DCOMPILER_NAME=" + json.dumps(tag)
-        return [ DCOMPILER_NAME, "-I.", "-O2", "-o", obj, "-c", src ]
+    def compile_cmd(self, src, obj):
+        return [ "-I.", "-O2", "-o", obj, "-c", src ]
 
     def link_cmd(self, objs, libs, exe):
         return [ "-o", exe ] + objs + libs
@@ -165,7 +162,7 @@ class Compiler(object):
            self.objname(src).  Returns True on success, False on failure.
            'verbose' is passed through to invoke()."""
         obj = self.objname(src)
-        return self.invoke(self.traits.compile_cmd(src, obj, self.tag),
+        return self.invoke(self.traits.compile_cmd(src, obj),
                            obj, verbose)
 
     def link(self, objs, exe, verbose=1):
