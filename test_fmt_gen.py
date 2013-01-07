@@ -14,8 +14,72 @@ import itertools
 import math
 import sys
 
+class TestCaseType(object):
+    """POD structure containing all information required for one subtest."""
+    allcasetypes = {}
+
+    def __init__(self, vtypes, caseprinter):
+        self.vtypes = vtypes
+        self.caseprinter = caseprinter
+        self.name = caseprinter.__name__
+
+        if self.name in self.allcasetypes:
+            raise RuntimeError("duplicate casetype name: " + self.name)
+        self.allcasetypes[self.name] = self
+
+    def __cmp__(self, other):
+        return cmp(self.name, other.name)
+
+    def write_case(self, outf, args):
+        outf.write("  { " + self.caseprinter(*args) + " },\n")
+
+    def write_decl(self, outf):
+        outf.write("struct {}\n".format(self.name))
+        outf.write("{\n  const char* spec;\n  const char* expected;\n")
+        for i_t in enumerate(self.vtypes):
+            outf.write("  {1} v{0};\n".format(*i_t))
+        outf.write("};\n\n")
+
+class caseprint(object):
+    """Decorator to facilitate creation of TestCaseTypes from
+       case printer functions."""
+    def __init__(self, vtypes):
+        if not isinstance(vtypes, tuple):
+            self.vtypes = (vtypes,)
+        else:
+            self.vtypes = vtypes
+    def __call__(self, fn):
+        return TestCaseType(self.vtypes, fn)
+
+def case_a1(tmpl, val, spec, override_spec):
+    spec = '{:' + spec + '}'
+    if override_spec is None:
+        override_spec = spec
+    else:
+        override_spec = '{:' + override_spec + '}'
+    tmpl = '"{}", "{}", ' + tmpl
+    return tmpl.format(spec, override_spec.format(val), val)
+
+@caseprint('const char*')
+def case_a1_cs(val, spec, override_spec=None):
+    return case_a1('"{}"', val, spec, override_spec)
+
+@caseprint('int')
+def case_a1_is(val, spec, override_spec=None):
+    return case_a1('{}', val, spec, override_spec)
+
+@caseprint('unsigned int')
+def case_a1_us(val, spec, override_spec=None):
+    return case_a1('{}', val, spec, override_spec)
+
+@caseprint('double')
+def case_a1_d(val, spec, override_spec=None):
+    return case_a1('{}', val, spec, override_spec)
+
 class TestBlock(object):
-    allblocks = []
+    """One block of tests.  All tests in a block share the same
+       'casetype'."""
+    allblocks = {}
 
     def __init__(self, casetype, generator):
         self.casetype = casetype
@@ -23,33 +87,32 @@ class TestBlock(object):
         self.name = generator.__name__
         if self.name.startswith('test_'):
             self.name = self.name[5:]
-        self.allblocks.append(self)
+
+        if self.name in self.allblocks:
+            raise RuntimeError("duplicate test block name: " + name)
+        self.allblocks[self.name] = self
 
     def __cmp__(self, other):
+        # We want all tests that use the same casetype to be grouped together.
         return (cmp(self.casetype, other.casetype) or
-                cmp(self.name, other.name) or
-                cmp(self.generator, other.generator))
-
-    def emit(self, pattern, outf=None):
-        txt = pattern.format(**vars(self))
-        if outf is not None:
-            outf.write(txt)
-        return txt
+                cmp(self.name, other.name))
 
     def write_cases(self, outf):
-        self.emit("const case_{casetype} {name}_tests[] = {{\n", outf)
+        outf.write("const {0} tc_{1}[] = {{\n"
+                   .format(self.casetype.name, self.name))
         count = 0
         for case in self.generator():
-            outf.write("  { " + case + " },\n")
+            self.casetype.write_case(outf, case)
             count += 1
         outf.write("}};\n// {} cases\n\n".format(count))
 
     def write_tblock_obj(self, outf):
-        self.emit("const tblock<case_{casetype}> "
-                  "tg_{name}(\"{name}\", {name}_tests);\n", outf)
+        outf.write("const tblock<{0}> "
+                   "tg_{1}(\"{1}\", tc_{1});\n"
+                   .format(self.casetype.name, self.name))
 
     def write_tblocks_entry(self, outf):
-        self.emit("  &tg_{name},\n", outf)
+        outf.write("  &tg_{},\n".format(self.name))
 
 class testgen(object):
     """Decorator to facilitate creation of TestBlocks from test
@@ -59,12 +122,8 @@ class testgen(object):
     def __call__(self, fn):
         return TestBlock(self.casetype, fn)
 
-@testgen('1arg_s')
+@testgen(case_a1_cs)
 def test_cstr():
-
-    def output(spec, val):
-        spec = '{:' + spec + '}'
-        return '"{}", "{}", "{}"'.format(spec, spec.format(val), val)
 
     words = [ '', 'i', 'of', 'sis', 'fice', 'drisk', 'elanet', 'hippian',
               'botanist', 'synaptene', 'cipherhood', 'schizognath' ]
@@ -75,17 +134,17 @@ def test_cstr():
 
     for r in words:
         for a in aligns:
-            yield output(a, r)
+            yield (r, a)
 
             for w in xrange(1, maxw, 3):
-                yield output('{}{}'.format(a, w), r)
+                yield (r, '{}{}'.format(a, w))
 
             for p in xrange(0, maxw, 3):
-                yield output('{}.{}'.format(a, p), r)
+                yield (r, '{}.{}'.format(a, p))
 
             for w in xrange(1, maxw, 3):
                 for p in xrange(0, maxw, 3):
-                    yield output('{}{}.{}'.format(a, w, p), r)
+                    yield (r, '{}{}.{}'.format(a, w, p))
 
 # Helpers for the next several tests.  We want to test only a few
 # numbers, because there are so many modifier combinations to work
@@ -129,12 +188,8 @@ def float_test_cases():
                                      abs(x),
                                      0 if x>=0 else 1))
 
-@testgen('1arg_is')
+@testgen(case_a1_is)
 def test_int_signed():
-
-    def output(spec, val):
-        spec = '{:' + spec + '}'
-        return '"{}", "{}", {}'.format(spec, spec.format(val), val)
 
     numbers = integer_test_cases(2**32, True)
     aligns  = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
@@ -148,14 +203,10 @@ def test_int_signed():
         # Skip '0' modifier with explicit alignment.
         # Python allows this combination, fmt.cc doesn't.
         if a == '' or '0' not in m:
-            yield output(a+s+m+w+t, n)
+            yield (n, a+s+m+w+t)
 
-@testgen('1arg_iu')
+@testgen(case_a1_us)
 def test_int_unsigned():
-
-    def output(spec, val):
-        spec = '{:' + spec + '}'
-        return '"{}", "{}", {}'.format(spec, spec.format(val), val)
 
     numbers = integer_test_cases(2**32, False)
     aligns  = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
@@ -169,19 +220,10 @@ def test_int_unsigned():
         # Skip '0' modifier with explicit alignment.
         # Python allows this combination, fmt.cc doesn't.
         if a == '' or '0' not in m:
-            yield output(a+s+m+w+t, n)
+            yield (n, a+s+m+w+t)
 
-@testgen('1arg_f')
-def test_float():
-
-    def output(val, spec, override_spec=None):
-        spec = '{:' + spec + '}'
-        if override_spec is None:
-            override_spec = spec
-        else:
-            override_spec = '{:' + override_spec + '}'
-
-        return '"{}", "{}", {}'.format(spec, override_spec.format(val), val)
+@testgen(case_a1_d)
+def test_double():
 
     numbers = float_test_cases()
     aligns  = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
@@ -198,9 +240,9 @@ def test_float():
             if t == '':
                 # Python's no-typecode behavior for floats is not exactly
                 # any of 'e', 'f', or 'g'.  fmt.cc treats it the same as 'g'.
-                yield output(n, a+s+m+w, a+s+m+w+'g')
+                yield (n, a+s+m+w, a+s+m+w+'g')
             else:
-                yield output(n, a+s+m+w+t)
+                yield (n, a+s+m+w+t)
 
 skeleton_top = r"""// Tester for cxxfmt.
 
@@ -236,38 +278,10 @@ bool quiet = false;
 // leading to gargantuan assembly output and very slow object file
 // generation.
 
-struct case_1arg_s
-{
-  const char *spec;
-  const char *expected;
-  const char *val;
-};
+"""
 
-struct case_1arg_is
-{
-  const char *spec;
-  const char *expected;
-  int val;
-};
-
-struct case_1arg_iu
-{
-  const char *spec;
-  const char *expected;
-  unsigned int val;
-};
-
-struct case_1arg_f
-{
-  const char *spec;
-  const char *expected;
-  float val;
-};
-
-// more case_ structures here
-
-static bool
-report(const char *spec, string const& got, const char *expected)
+skeleton_mid = r"""static bool
+report(const char* spec, string const& got, const char* expected)
 {
   if (got == expected)
     return true;
@@ -281,13 +295,13 @@ report(const char *spec, string const& got, const char *expected)
   }
 }
 
-template <typename case_1arg>
+template <typename case_a1>
 static bool
-process(const case_1arg *cases, size_t n)
+process(const case_a1* cases, size_t n)
 {
   bool success = true;
-  for (const case_1arg *c = cases; c < cases+n; c++) {
-    string got(format(c->spec, c->val));
+  for (const case_a1* c = cases; c < cases+n; c++) {
+    string got(format(c->spec, c->v0));
     success &= report(c->spec, got, c->expected);
   }
   return success;
@@ -295,17 +309,17 @@ process(const case_1arg *cases, size_t n)
 
 // more process_ overloads here
 
-struct i_tblock { virtual bool operator()(const char *) const = 0; };
+struct i_tblock { virtual bool operator()(const char*) const = 0; };
 
-template <typename case_1arg>
+template <typename caseT>
 struct tblock : i_tblock
 {
   template <size_t N>
-  tblock(const char *tag_, const case_1arg (&cases_)[N])
+  tblock(const char* tag_, const caseT (&cases_)[N])
     : tag(tag_), cases(cases_), n(N)
   {}
 
-  virtual bool operator()(const char *label_) const
+  virtual bool operator()(const char* label_) const
   {
     string label(label_);
     label += '\t';
@@ -323,8 +337,8 @@ struct tblock : i_tblock
   }
 
 private:
-  const char *tag;
-  const case_1arg *cases;
+  const char* tag;
+  const caseT* cases;
   size_t n;
 };
 
@@ -335,7 +349,7 @@ skeleton_bot = r"""
 } // anonymous namespace
 
 int
-main(int argc, char **argv)
+main(int argc, char** argv)
 {
   if (argc > 1 && !strcmp(argv[1], "-q"))
     quiet = true;
@@ -353,9 +367,17 @@ def main():
         outf = sys.stdout
 
     with outf:
-        blocks = TestBlock.allblocks
-
         outf.write(skeleton_top)
+
+        casets = TestCaseType.allcasetypes.values()
+        casets.sort()
+        for ct in casets: ct.write_decl(outf)
+
+        outf.write(skeleton_mid)
+
+        blocks = TestBlock.allblocks.values()
+        blocks.sort()
+
         for b in blocks: b.write_cases(outf)
         for b in blocks: b.write_tblock_obj(outf)
 
