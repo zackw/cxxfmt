@@ -411,7 +411,7 @@ int main()
         try:
             output = subprocess.check_output([prog] + CT_Unix().version_cmd(),
                                              stderr=cls.DEVNULL)
-        except CalledProcessError:
+        except subprocess.CalledProcessError:
             return None
 
         output = output.lower()
@@ -547,7 +547,7 @@ class CompileJob(Job):
         Job.__init__(self, verbose, deps, output=cc.objname(src))
 
     def run(self):
-        return self.cc.compile(self.src)
+        return self.cc.compile(self.src, self.verbose)
 
 class LinkJob(Job):
     """Job to link one or more object files with a specified compiler.
@@ -560,7 +560,7 @@ class LinkJob(Job):
         Job.__init__(self, verbose, deps, output=cc.exename(exebase))
 
     def run(self):
-        return self.cc.link(self.objs, self.exebase)
+        return self.cc.link(self.objs, self.exebase, self.verbose)
 
 class RunJob(Job):
     """Job to run a program with arguments."""
