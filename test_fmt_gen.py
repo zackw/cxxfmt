@@ -81,15 +81,18 @@ class TestBlock(object):
        'casetype'."""
     allblocks = {}
 
-    def __init__(self, casetype, generator):
+    def __init__(self, casetype, generator, name = None):
         self.casetype = casetype
         self.generator = generator
-        self.name = generator.__name__
-        if self.name.startswith('test_'):
-            self.name = self.name[5:]
+        if name is None:
+            self.name = generator.__name__
+            if self.name.startswith('test_'):
+                self.name = self.name[5:]
+        else:
+            self.name = name
 
         if self.name in self.allblocks:
-            raise RuntimeError("duplicate test block name: " + name)
+            raise RuntimeError("duplicate test block name: " + self.name)
         self.allblocks[self.name] = self
 
     def __cmp__(self, other):
@@ -106,8 +109,40 @@ class TestBlock(object):
             count += 1
         outf.write("}};\n// {} cases\n\n".format(count))
 
+    def write_process_fn(self, outf):
+        pass
+
     def write_process_call(self, outf):
         outf.write('  success &= process("{0}", tc_{0});\n'.format(self.name))
+
+class VarTB(TestBlock):
+    """A block of tests which reuses an existing block with a different
+       'process1' function."""
+    def __init__(self, depblock, p1name, p1body):
+        self.depblock = depblock
+        self.p1name = p1name
+        self.p1body = p1body
+
+        TestBlock.__init__(self, depblock.casetype, lambda: [],
+                           depblock.name + "_" + p1name)
+
+    def write_cases(self, outf):
+        pass
+
+    def write_process_fn(self, outf):
+        vs = ", ".join("v"+str(i) for i in range(len(self.casetype.vtypes)))
+        outf.write(r"""static bool
+process1_{0}(const {1}& c)
+{{
+  {2}
+  return process1_T(c.spec, c.expected, {3});
+}}
+
+""".format(self.p1name, self.casetype.name, self.p1body, vs))
+
+    def write_process_call(self, outf):
+        outf.write('  success &= process("{0}", tc_{1}, process1_{2});\n'
+                   .format(self.name, self.depblock.name, self.p1name))
 
 class testgen(object):
     """Decorator to facilitate creation of TestBlocks from test
@@ -118,7 +153,7 @@ class testgen(object):
         return TestBlock(self.casetype, fn)
 
 @testgen(case_a1_cs)
-def test_cstr():
+def test_str():
 
     words = [ '', 'i', 'of', 'sis', 'fice', 'drisk', 'elanet', 'hippian',
               'botanist', 'synaptene', 'cipherhood', 'schizognath' ]
@@ -140,6 +175,46 @@ def test_cstr():
             for w in xrange(1, maxw, 3):
                 for p in xrange(0, maxw, 3):
                     yield (r, '{}{}.{}'.format(a, w, p))
+
+test_a1_str_stdstr = VarTB(test_str, "std_string",
+                           "string v0(c.v0);")
+test_a1_str_stdexc = VarTB(test_str, "std_exception",
+                           "logic_error v0(c.v0);")
+test_a1_str_csconv = VarTB(test_str, "cstr_conversion",
+                           """struct ts {
+    const char* s;
+    ts(const char* s_) : s(s_) {}
+    operator const char* () const { return s; }
+  };
+  ts v0(c.v0);""")
+test_a1_str_csstr  = VarTB(test_str, "cstr_str",
+                           """struct ts {
+    const char* s;
+    ts(const char *s_) : s(s_) {}
+    const char* str() const { return s; }
+  };
+  ts v0(c.v0);""")
+test_a1_str_cscstr = VarTB(test_str, "cstr_c_str",
+                           """struct ts {
+    const char *s;
+    ts(const char *s_) : s(s_) {}
+    const char* c_str() const { return s; }
+  };
+  ts v0(c.v0);""")
+test_a1_str_ssconv = VarTB(test_str, "std_string_conv",
+                           """struct ts {
+    const char *s;
+    ts(const char *s_) : s(s_) {}
+    operator string() const { return string(s); }
+  };
+  ts v0(c.v0);""")
+test_a1_str_ssstr  = VarTB(test_str, "std_string_str",
+                           """struct ts {
+    const char *s;
+    ts(const char *s_) : s(s_) {}
+    string str() const { return string(s); }
+  };
+  ts v0(c.v0);""")
 
 # Helpers for the next several tests.  We want to test only a few
 # numbers, because there are so many modifier combinations to work
@@ -239,7 +314,7 @@ def test_double():
             else:
                 yield (n, a+s+m+w+t)
 
-skeleton_top = r"""// Tester for cxxfmt.
+skeleton_0 = r"""// Tester for cxxfmt.
 
 // Copyright 2012 Zachary Weinberg <zackw@panix.com>.
 // Use, modification, and distribution are subject to the
@@ -250,14 +325,16 @@ skeleton_top = r"""// Tester for cxxfmt.
 // Edit test_fmt.py instead.
 
 #include <cstring>
-#include <string>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 #include <fmt.h>
 
+using std::cout;
+using std::logic_error;
+using std::flush;
 using std::strcmp;
 using std::string;
-using std::cout;
-using std::flush;
 using fmt::format;
 
 namespace {
@@ -271,7 +348,7 @@ bool quiet = false;
 
 """
 
-skeleton_mid = r"""static bool
+skeleton_1 = r"""static bool
 report(const char* spec, string const& got, const char* expected)
 {
   if (got == expected)
@@ -286,14 +363,24 @@ report(const char* spec, string const& got, const char* expected)
   }
 }
 
+template <typename T>
+static bool
+process1_T(const char *spec, const char *expected, T const& val)
+{
+  string got(format(spec, val));
+  return report(spec, got, expected);
+}
+
 template <typename case_a1>
 static bool
 process1_generic(const case_a1& c)
 {
-  string got(format(c.spec, c.v0));
-  return report(c.spec, got, c.expected);
+  return process1_T(c.spec, c.expected, c.v0);
 }
 
+"""
+
+skeleton_2 = r"""
 template <typename caseT, size_t n>
 static bool
 process(const char *tag, const caseT (&cases)[n],
@@ -324,7 +411,7 @@ main(int argc, char** argv)
 
 """
 
-skeleton_bot = """
+skeleton_3 = r"""
   return success ? 0 : 1;
 }
 """
@@ -336,7 +423,7 @@ def main():
         outf = sys.stdout
 
     with outf:
-        outf.write(skeleton_top)
+        outf.write(skeleton_0)
 
         casets = TestCaseType.allcasetypes.values()
         casets.sort()
@@ -346,11 +433,15 @@ def main():
         blocks.sort()
         for b in blocks: b.write_cases(outf)
 
-        outf.write(skeleton_mid)
+        outf.write(skeleton_1)
+
+        for b in blocks: b.write_process_fn(outf)
+
+        outf.write(skeleton_2)
 
         for b in blocks: b.write_process_call(outf)
 
-        outf.write(skeleton_bot)
+        outf.write(skeleton_3)
 
 assert __name__ == '__main__'
 main()
