@@ -15,6 +15,16 @@ import itertools
 import json
 import math
 import sys
+import textwrap
+
+def redent(text, indent):
+    """Remove all common indentation from 'text' and then insert
+       'indent' at the beginning of each line. 'indent' can be either
+       a string, which is inserted as is, or a number, which is how
+       many spaces to insert."""
+    if isinstance(indent, int) or isinstance(indent, long):
+        indent = ' '*indent
+    return '\n'.join(indent+l for l in textwrap.dedent(text).split('\n'))
 
 class TestCaseType(object):
     """POD structure containing all information required for one subtest."""
@@ -149,10 +159,21 @@ class TestBlock(object):
 class VarTB(TestBlock):
     """A block of tests which reuses an existing block with a different
        'process1' function."""
+
+    process_template = textwrap.dedent("""\
+          static bool
+          process1_{0}(const {1}& c)
+          {{
+          {2}
+            return process1_T(c.spec, c.expected, {3});
+          }}
+
+          """)
+
     def __init__(self, depblock, p1name, p1body):
         self.depblock = depblock
         self.p1name = p1name
-        self.p1body = p1body
+        self.p1body = redent(p1body, 2)
 
         TestBlock.__init__(self, depblock.casetype, lambda: [],
                            depblock.name + "_" + p1name)
@@ -162,14 +183,9 @@ class VarTB(TestBlock):
 
     def write_process_fn(self, outf):
         vs = ", ".join("v"+str(i) for i in range(len(self.casetype.vtypes)))
-        outf.write(r"""static bool
-process1_{0}(const {1}& c)
-{{
-  {2}
-  return process1_T(c.spec, c.expected, {3});
-}}
-
-""".format(self.p1name, self.casetype.name, self.p1body, vs))
+        outf.write(self.process_template.format(self.p1name,
+                                                self.casetype.name,
+                                                self.p1body, vs))
 
     def write_process_call(self, outf):
         outf.write('  success &= process("{0}", tc_{1}, process1_{2});\n'
@@ -211,42 +227,41 @@ test_a1_str_stdstr = VarTB(test_str, "std_string",
                            "string v0(c.v0);")
 test_a1_str_stdexc = VarTB(test_str, "std_exception",
                            "logic_error v0(c.v0);")
-test_a1_str_csconv = VarTB(test_str, "cstr_conversion",
-                           """struct ts {
-    const char* s;
-    ts(const char* s_) : s(s_) {}
-    operator const char* () const { return s; }
-  };
-  ts v0(c.v0);""")
-test_a1_str_csstr  = VarTB(test_str, "cstr_str",
-                           """struct ts {
-    const char* s;
-    ts(const char *s_) : s(s_) {}
-    const char* str() const { return s; }
-  };
-  ts v0(c.v0);""")
-test_a1_str_cscstr = VarTB(test_str, "cstr_c_str",
-                           """struct ts {
-    const char *s;
-    ts(const char *s_) : s(s_) {}
-    const char* c_str() const { return s; }
-  };
-  ts v0(c.v0);""")
-test_a1_str_ssconv = VarTB(test_str, "std_string_conv",
-                           """struct ts {
-    const char *s;
-    ts(const char *s_) : s(s_) {}
-    operator string() const { return string(s); }
-  };
-  ts v0(c.v0);""")
-test_a1_str_ssstr  = VarTB(test_str, "std_string_str",
-                           """struct ts {
-    const char *s;
-    ts(const char *s_) : s(s_) {}
-    string str() const { return string(s); }
-  };
-  ts v0(c.v0);""")
-
+test_a1_str_csconv = VarTB(test_str, "cstr_conversion", """\
+                             struct ts {
+                               const char* s;
+                               ts(const char* s_) : s(s_) {}
+                               operator const char* () const { return s; }
+                             };
+                             ts v0(c.v0);""")
+test_a1_str_csstr  = VarTB(test_str, "cstr_str", """\
+                             struct ts {
+                               const char* s;
+                               ts(const char *s_) : s(s_) {}
+                               const char* str() const { return s; }
+                             };
+                             ts v0(c.v0);""")
+test_a1_str_cscstr = VarTB(test_str, "cstr_c_str", """\
+                             struct ts {
+                               const char *s;
+                               ts(const char *s_) : s(s_) {}
+                               const char* c_str() const { return s; }
+                             };
+                             ts v0(c.v0);""")
+test_a1_str_ssconv = VarTB(test_str, "std_string_conv", """\
+                             struct ts {
+                               const char *s;
+                               ts(const char *s_) : s(s_) {}
+                               operator string() const { return string(s); }
+                             };
+                             ts v0(c.v0);""")
+test_a1_str_ssstr  = VarTB(test_str, "std_string_str", """\
+                             struct ts {
+                               const char *s;
+                               ts(const char *s_) : s(s_) {}
+                               string str() const { return string(s); }
+                             };
+                             ts v0(c.v0);""")
 
 @testgen(case_a1_c)
 def test_char():
