@@ -383,7 +383,7 @@ do_alignment(const string &s, const format_spec &spec,
     char align = spec.align;
 
     if (align == '\0')
-      align = type == 's' ? '<' : '>';
+      align = (type == 's' || type == 'c') ? '<' : '>';
 
     switch (align) {
     case '<':
@@ -583,12 +583,16 @@ do_format_char(unsigned long long val,
                const format_spec &spec,
                string &out)
 {
-  if (spec.type == 'c' && val <= numeric_limits<unsigned char>::max())
-    // precision and most modifiers are ignored; just emit the
-    // character with appropriate padding.
-    do_alignment(string(1, val), spec, spec.type, false, out);
-
-  else
+  if ((spec.type == 'c' || spec.type == 's')
+      && val <= numeric_limits<unsigned char>::max()) {
+    // Most modifiers are ignored; just emit the character with
+    // appropriate padding.  If the precision is zero, print the
+    // empty string.
+    if (spec.has_precision && spec.precision == 0)
+      do_alignment(string(), spec, spec.type, false, out);
+    else
+      do_alignment(string(1, val), spec, spec.type, false, out);
+  } else
     // format as unsigned decimal, with error markers.
     do_numeric_format(val, spec, 'u', true, out);
 }

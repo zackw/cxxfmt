@@ -10,7 +10,9 @@
 # and run the result.  The output of that program should be
 # self-explanatory.
 
+import curses.ascii
 import itertools
+import json
 import math
 import sys
 
@@ -31,7 +33,11 @@ class TestCaseType(object):
         return cmp(self.name, other.name)
 
     def write_case(self, outf, args):
-        outf.write("  { " + self.caseprinter(*args) + " },\n")
+        try:
+            outf.write("  { " + self.caseprinter(*args) + " },\n")
+        except:
+            sys.stderr.write("\n*** args: " + repr(args) + "\n")
+            raise
 
     def write_decl(self, outf):
         outf.write("struct {}\n".format(self.name))
@@ -51,30 +57,55 @@ class caseprint(object):
     def __call__(self, fn):
         return TestCaseType(self.vtypes, fn)
 
-def case_a1(tmpl, val, spec, override_spec):
+def case_a1(spec, override_spec, val, cval):
     spec = '{:' + spec + '}'
-    if override_spec is None:
-        override_spec = spec
-    else:
-        override_spec = '{:' + override_spec + '}'
-    tmpl = '"{}", "{}", ' + tmpl
-    return tmpl.format(spec, override_spec.format(val), val)
+    override_spec = '{:' + override_spec + '}'
+    formatted = override_spec.format(val)
+    # repr() / .encode("string_escape") usually doesn't produce a
+    # valid C string literal.  json.dumps() does (conveniently, the
+    # JSON string literal syntax is the same as the C string literal syntax).
+    return (json.dumps(spec) + ", " + json.dumps(formatted) + ", " + cval)
 
 @caseprint('const char*')
-def case_a1_cs(val, spec, override_spec=None):
-    return case_a1('"{}"', val, spec, override_spec)
+def case_a1_cs(val, spec):
+    return case_a1(spec, spec, val, json.dumps(val))
 
 @caseprint('int')
-def case_a1_is(val, spec, override_spec=None):
-    return case_a1('{}', val, spec, override_spec)
+def case_a1_is(val, spec):
+    return case_a1(spec, spec, val, str(val))
 
 @caseprint('unsigned int')
-def case_a1_us(val, spec, override_spec=None):
-    return case_a1('{}', val, spec, override_spec)
+def case_a1_us(val, spec):
+    return case_a1(spec, spec, val, str(val))
 
 @caseprint('double')
-def case_a1_d(val, spec, override_spec=None):
-    return case_a1('{}', val, spec, override_spec)
+def case_a1_d(val, spec):
+    ospec = spec
+    # Python's no-typecode behavior for floats is not exactly
+    # any of 'e', 'f', or 'g'.  fmt.cc treats it the same as 'g'.
+    if len(spec) == 0 or spec[-1] not in "eEfFgG":
+        ospec += 'g'
+    return case_a1(spec, ospec, val, str(val))
+
+@caseprint('char')
+def case_a1_c(val, spec):
+    # Python has no stock way to print a valid C character literal.
+    if len(val) > 1:
+        raise ValueError("{!r} is not a one-character string".format(val))
+    if curses.ascii.isprint(val) and val != "'":
+        cval = "'" + val + "'"
+    else:
+        cval = "'\\x{:02x}'".format(ord(val))
+    # Python doesn't support printing characters with numeric
+    # typecodes (which fmt.cc does).
+    if len(spec) > 0 and spec[-1] in "doxX":
+        val = ord(val)
+    # Python doesn't have the 'c' typecode (characters being
+    # just strings of length 1 to it)
+    ospec = spec
+    if len(spec) > 0 and spec[-1] == 'c':
+        ospec = ospec[:-1] + 's'
+    return case_a1(spec, ospec, val, cval)
 
 class TestBlock(object):
     """One block of tests.  All tests in a block share the same
@@ -216,6 +247,21 @@ test_a1_str_ssstr  = VarTB(test_str, "std_string_str",
   };
   ts v0(c.v0);""")
 
+
+@testgen(case_a1_c)
+def test_char():
+    chars  = "a!'0\t"
+    types  = [ '', 'c', 'd', 'o', 'x', 'X' ]
+    aligns = [ '', '<', '>', '^', 'L<', 'R>', 'C^' ]
+    widths = [ '', '1', '3', '4' ]
+    precs  = [ '', '.0', '.1', '.3', '.4' ]
+
+    for (r, t, a, w, p) in itertools.product(chars, types, aligns,
+                                             widths, precs):
+        if (t != '' and t != 'c') and p != '':
+            continue # integer formatting doesn't allow precision
+        yield (r, a+w+p+t)
+
 # Helpers for the next several tests.  We want to test only a few
 # numbers, because there are so many modifier combinations to work
 # through for each (~2000 for integers, ~2500 for floats) so we could
@@ -307,12 +353,7 @@ def test_double():
         # Skip '0' modifier with explicit alignment.
         # Python allows this combination, fmt.cc doesn't.
         if a == '' or '0' not in m:
-            if t == '':
-                # Python's no-typecode behavior for floats is not exactly
-                # any of 'e', 'f', or 'g'.  fmt.cc treats it the same as 'g'.
-                yield (n, a+s+m+w, a+s+m+w+'g')
-            else:
-                yield (n, a+s+m+w+t)
+            yield (n, a+s+m+w+t)
 
 skeleton_0 = r"""// Tester for cxxfmt.
 
