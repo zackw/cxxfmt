@@ -412,7 +412,7 @@ int main()
             return None
 
         output = output.lower()
-        if "gcc" in output: return CT_Gcc()
+        if "gcc" in output or "g++" in output: return CT_Gcc()
         elif "clang" in output: return CT_Clang()
         else: return None
 
