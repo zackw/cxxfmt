@@ -102,11 +102,25 @@ def case_a1_is(val, spec):
     return case_a1(spec, spec, val, str(val))
 
 @caseprint('unsigned int')
-def case_a1_us(val, spec):
+def case_a1_iu(val, spec):
     return case_a1(spec, spec, val, str(val))
 
-@caseprint('double')
-def case_a1_d(val, spec):
+@caseprint('long long')
+def case_a1_lls(val, spec):
+    # Special case -(2**63), which may trigger "integer constant is so
+    # large that it is unsigned" warnings even when properly suffixed.
+    if val == -2**63:
+        sval = "{}LL - 1LL".format(val+1)
+    else:
+        sval = str(val) + "LL"
+    return case_a1(spec, spec, val, sval)
+
+@caseprint('unsigned long long')
+def case_a1_llu(val, spec):
+    return case_a1(spec, spec, val, str(val)+"LLU")
+
+@caseprint('float')
+def case_a1_f(val, spec):
     ospec = spec
     # Python's no-typecode behavior for floats is not exactly
     # any of 'e', 'f', or 'g'.  fmt.cc treats it the same as 'g'.
@@ -288,45 +302,45 @@ def test_str():
                 for p in xrange(0, maxw, 3):
                     yield (r, '{}{}.{}'.format(a, w, p))
 
-test_a1_str_stdstr = VarTB(test_str, "std_string",
-                           "string v0(c.v0);")
-test_a1_str_stdexc = VarTB(test_str, "std_exception",
-                           "logic_error v0(c.v0);")
-test_a1_str_csconv = VarTB(test_str, "cstr_conversion", """\
-                             struct ts {
-                               const char* s;
-                               ts(const char* s_) : s(s_) {}
-                               operator const char* () const { return s; }
-                             };
-                             ts v0(c.v0);""")
-test_a1_str_csstr  = VarTB(test_str, "cstr_str", """\
-                             struct ts {
-                               const char* s;
-                               ts(const char *s_) : s(s_) {}
-                               const char* str() const { return s; }
-                             };
-                             ts v0(c.v0);""")
-test_a1_str_cscstr = VarTB(test_str, "cstr_c_str", """\
-                             struct ts {
-                               const char *s;
-                               ts(const char *s_) : s(s_) {}
-                               const char* c_str() const { return s; }
-                             };
-                             ts v0(c.v0);""")
-test_a1_str_ssconv = VarTB(test_str, "std_string_conv", """\
-                             struct ts {
-                               const char *s;
-                               ts(const char *s_) : s(s_) {}
-                               operator string() const { return string(s); }
-                             };
-                             ts v0(c.v0);""")
-test_a1_str_ssstr  = VarTB(test_str, "std_string_str", """\
-                             struct ts {
-                               const char *s;
-                               ts(const char *s_) : s(s_) {}
-                               string str() const { return string(s); }
-                             };
-                             ts v0(c.v0);""")
+test_str_stdstr = VarTB(test_str, "std_string",
+                        "string v0(c.v0);")
+test_str_stdexc = VarTB(test_str, "std_exception",
+                        "logic_error v0(c.v0);")
+test_str_csconv = VarTB(test_str, "cstr_conversion", """\
+                          struct ts {
+                            const char* s;
+                            ts(const char* s_) : s(s_) {}
+                            operator const char* () const { return s; }
+                          };
+                          ts v0(c.v0);""")
+test_str_csstr  = VarTB(test_str, "cstr_str", """\
+                          struct ts {
+                            const char* s;
+                            ts(const char *s_) : s(s_) {}
+                            const char* str() const { return s; }
+                          };
+                          ts v0(c.v0);""")
+test_str_cscstr = VarTB(test_str, "cstr_c_str", """\
+                          struct ts {
+                            const char *s;
+                            ts(const char *s_) : s(s_) {}
+                            const char* c_str() const { return s; }
+                          };
+                          ts v0(c.v0);""")
+test_str_ssconv = VarTB(test_str, "std_string_conv", """\
+                          struct ts {
+                            const char *s;
+                            ts(const char *s_) : s(s_) {}
+                            operator string() const { return string(s); }
+                          };
+                          ts v0(c.v0);""")
+test_str_ssstr  = VarTB(test_str, "std_string_str", """\
+                          struct ts {
+                            const char *s;
+                            ts(const char *s_) : s(s_) {}
+                            string str() const { return string(s); }
+                          };
+                          ts v0(c.v0);""")
 
 @testgen(case_a1_c)
 def test_char():
@@ -341,6 +355,9 @@ def test_char():
         if (t != '' and t != 'c') and p != '':
             continue # integer formatting doesn't allow precision
         yield (r, a+w+p+t)
+
+test_char_uchar = VarTB(test_char, "unsigned", "unsigned char v0 = c.v0;")
+test_char_schar = VarTB(test_char, "signed", "signed char v0 = c.v0;")
 
 # Helpers for the next several tests.  We want to test only a few
 # numbers, because there are so many modifier combinations to work
@@ -401,7 +418,7 @@ def test_int_signed():
         if a == '' or '0' not in m:
             yield (n, a+s+m+w+t)
 
-@testgen(case_a1_us)
+@testgen(case_a1_iu)
 def test_int_unsigned():
 
     numbers = integer_test_cases(2**32, False)
@@ -418,8 +435,27 @@ def test_int_unsigned():
         if a == '' or '0' not in m:
             yield (n, a+s+m+w+t)
 
-@testgen(case_a1_d)
-def test_double():
+# Test very large numbers with a reduced set of format modifiers.
+@testgen(case_a1_lls)
+def test_long_signed():
+    numbers = integer_test_cases(2**64, True)
+    types   = [ '', 'd', 'o', 'x', 'X' ]
+    signs   = [ '', '+', '-', ' ' ]
+    mods    = [ '', '0', '#', '#0' ]
+    for (n,t,s,m) in itertools.product(numbers, types, signs, mods):
+        yield (n, s+m+t)
+
+@testgen(case_a1_llu)
+def test_long_unsigned():
+    numbers = integer_test_cases(2**64, False)
+    types   = [ '', 'd', 'o', 'x', 'X' ]
+    signs   = [ '', '+', '-', ' ' ]
+    mods    = [ '', '0', '#', '#0' ]
+    for (n,t,s,m) in itertools.product(numbers, types, signs, mods):
+        yield (n, s+m+t)
+
+@testgen(case_a1_f)
+def test_float():
 
     numbers = float_test_cases()
     aligns  = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
@@ -434,6 +470,11 @@ def test_double():
         # Python allows this combination, fmt.cc doesn't.
         if a == '' or '0' not in m:
             yield (n, a+s+m+w+t)
+
+# We don't attempt to test values not representable in single
+# precision, for fear of hitting variance between floating-point
+# conversion libraries.
+test_float_dbl = VarTB(test_float, "double", "double v0 = c.v0;")
 
 skeleton_0 = r"""// Tester for cxxfmt.
 

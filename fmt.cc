@@ -82,6 +82,22 @@ is_negative(T, typename std::enable_if<std::is_unsigned<T>::value>::type* = 0)
   return false;
 }
 
+// std::make_unsigned causes a compile-time error if applied to a
+// floating-point type. std::conditional does not (reliably) prevent
+// this error.
+template <typename T, typename = void>
+struct unsigned_if_integral
+{
+  typedef T type;
+};
+
+template <typename T>
+struct unsigned_if_integral<T, typename std::enable_if<
+                                 std::is_integral<T>::value>::type>
+{
+  typedef typename std::make_unsigned<T>::type type;
+};
+
 } // anonymous namespace
 
 namespace fmt {
@@ -456,11 +472,18 @@ do_numeric_format(T val, const format_spec &spec,
   // Python prints negative hex/oct numbers as a minus sign followed
   // by the absolute value, iostreams coerces to unsigned; I think the
   // Python behavior is more useful
+  // to handle the most negative possible value of a twos-complement
+  // signed integral type correctly, we need to assign to an unsigned
+  // type after taking the absolute value, because of the asymmetric
+  // range of such types.  this is not an issue for floating point.
+  typename unsigned_if_integral<T>::type uval;
   if (is_negative(val)) {
+    uval = -val;
     os << '-';
-    val = -val;
-  } else if (spec.sign != '-') {
-    os << spec.sign;
+  } else {
+    uval = val;
+    if (spec.sign != '-')
+      os << spec.sign;
   }
 
   // iostreams 'o' alternate form is '0nnnn' not '0onnnn'
@@ -499,7 +522,7 @@ do_numeric_format(T val, const format_spec &spec,
   if (type == 'E' || type == 'F' || type == 'G' || type == 'X')
     os.setf(ios_base::uppercase);
 
-  os << val;
+  os << uval;
 
   do_alignment(os.str(), spec, type, error, out);
 }
