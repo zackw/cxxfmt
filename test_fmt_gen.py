@@ -67,14 +67,31 @@ class caseprint(object):
     def __call__(self, fn):
         return TestCaseType(self.vtypes, fn)
 
+# Python string literals can be set off with single quotes, and repr()
+# prefers that form, so it usually doesn't produce a valid C string
+# literal.  But the JSON string literal syntax is the same as the C
+# string literal syntax, so we can use json.dumps() instead.
+
+@caseprint( () )
+def case_a0(spec, output=None):
+    if output is None:
+        output = spec
+    # 'spec' may contain deliberate syntax errors marked with square
+    # brackets.  They are removed from the spec-to-test, and replaced
+    # with VT220 escape sequences in the expected output.
+    output = (output.replace('[', '\x1b[7m')
+                    .replace(']', '\x1b[27m'))
+    # json produces \uXXXX escapes for ESC, which would theoretically
+    # work in C++, but let's not try it.
+    output = json.dumps(output).replace('u001b', 'x1b')
+    spec = json.dumps(spec.replace('[', '').replace(']', ''))
+    return spec + ", " + output
+
 def case_a1(spec, override_spec, val, cval):
     spec = '{:' + spec + '}'
     override_spec = '{:' + override_spec + '}'
     formatted = override_spec.format(val)
-    # repr() / .encode("string_escape") usually doesn't produce a
-    # valid C string literal.  json.dumps() does (conveniently, the
-    # JSON string literal syntax is the same as the C string literal syntax).
-    return (json.dumps(spec) + ", " + json.dumps(formatted) + ", " + cval)
+    return json.dumps(spec) + ", " + json.dumps(formatted) + ", " + cval
 
 @caseprint('const char*')
 def case_a1_cs(val, spec):
@@ -198,6 +215,54 @@ class testgen(object):
         self.casetype = casetype
     def __call__(self, fn):
         return TestBlock(self.casetype, fn)
+
+@testgen(case_a0)
+def test_syntax_errors():
+    return (( (x,) if not isinstance(x, tuple) else x) for x in [
+        "no error",
+        ( "no error {{", "no error {" ),
+        ( "no error }}", "no error }" ),
+        ( "no error }}{{{{}}", "no error }{{}" ),
+        "absent argument [{}]",
+        "absent argument [{:}]",
+        "unbalanced [{]",
+        "unbalanced [}]",
+        ( "unbalanced {{[{]", "unbalanced {[{]" ),
+        ( "unbalanced }}[}]", "unbalanced }[}]" ),
+        "unbalanced [{0]",
+        "unbalanced [{:]",
+        "unbalanced [{:<]",
+        "unbalanced [{:E<]",
+        "unbalanced [{:0.0]",
+        "misordered [{:0+}]",
+        "misordered [{:0-}]",
+        "misordered [{:0 }]",
+        "misordered [{:0#}]",
+        "misordered [{:#+}]",
+        "misordered [{:#-}]",
+        "misordered [{:# }]",
+        "not a number [{:Z}]",
+        "not a number [{:.Z}]",
+        "not a number [{:Z.Z}]",
+        "trailing junk [{:0.0Z}]",
+        "zerofill with alignment [{:<0}]",
+        "zerofill with alignment [{:0<0}]",
+        "not yet supported [{0:{1}}]",
+        "not yet supported [{0:.{1}}]",
+        "not yet supported [{0:{1}.{2}}]",
+        "not yet supported [{:b}]",
+        "not yet supported [{:n}]",
+        "not yet supported [{:%}]",
+        "no plan to support [{expr}]",
+        "no plan to support [{.expr}]",
+        "no plan to support [{0.expr}]",
+        "no plan to support [{!r}]",
+        "no plan to support [{!s}]",
+        "no plan to support [{!b}]",
+        "no plan to support [{0!r}]",
+        "no plan to support [{0!s}]",
+        "no plan to support [{0!b}]",
+        ])
 
 @testgen(case_a1_cs)
 def test_str():
@@ -384,6 +449,7 @@ skeleton_0 = r"""// Tester for cxxfmt.
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <fmt.h>
 
 using std::cout;
@@ -419,6 +485,21 @@ report(const char* spec, string const& got, const char* expected)
   }
 }
 
+#define MAKE_HAS_TRAIT(memb)                                    \
+  template <typename T>                                         \
+  class has_##memb                                              \
+  {                                                             \
+    struct one { char x[1]; };                                  \
+    struct two { char x[2]; };                                  \
+    template <typename C> static one test(decltype(&C::memb));  \
+    template <typename C> static two test(...);                 \
+  public:                                                       \
+    enum { value = sizeof(test<T>(0)) == sizeof(char) };        \
+  } /* deliberate absence of semicolon */
+
+MAKE_HAS_TRAIT(v0);
+MAKE_HAS_TRAIT(v1);
+
 template <typename T>
 static bool
 process1_T(const char *spec, const char *expected, T const& val)
@@ -427,7 +508,18 @@ process1_T(const char *spec, const char *expected, T const& val)
   return report(spec, got, expected);
 }
 
-template <typename case_a1>
+template <typename case_a0,
+          typename = typename std::enable_if<!has_v0<case_a0>::value>::type>
+static bool
+process1_generic(const case_a0& c)
+{
+  string got(format(c.spec));
+  return report(c.spec, got, c.expected);
+}
+
+template <typename case_a1,
+          typename = typename std::enable_if<has_v0<case_a1>::value>::type,
+          typename = typename std::enable_if<!has_v1<case_a1>::value>::type>
 static bool
 process1_generic(const case_a1& c)
 {

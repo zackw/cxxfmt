@@ -272,10 +272,21 @@ parse_subst(const char *p, size_t default_index, format_spec& spec)
 
  error:
   spec.reset();
-  while (*p != '\0' && *p != '}')
+  // find the next matching close brace or the end of the string
+  unsigned int depth = 1;
+  for (;;) {
+    char c = *p;
+    if (*p == '\0')
+      break;
     p++;
-  if (*p == '}')
-    p++;
+    if (c == '{')
+      depth++;
+    if (c == '}') {
+      depth--;
+      if (depth == 0)
+        break;
+    }
+  }
   return p;
 }
 
