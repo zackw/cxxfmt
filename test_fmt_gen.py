@@ -406,7 +406,7 @@ def test_int_signed():
 
     numbers = integer_test_cases(2**32, True)
     aligns  = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
-    types   = [ '', 'd', 'o', 'x', 'X' ]
+    types   = [ '', 'd', 'o', 'x', 'X', 'g' ]
     signs   = [ '', '+', '-', ' ' ]
     mods    = [ '', '0', '#', '#0' ]
     widths  = [ '', '6', '12' ]
@@ -415,7 +415,9 @@ def test_int_signed():
                                            mods, widths, types):
         # Skip '0' modifier with explicit alignment.
         # Python allows this combination, fmt.cc doesn't.
-        if a == '' or '0' not in m:
+        # Also skip '#' with 'g', which is not allowed by either.
+        if ((a == '' or '0' not in m) and
+            (t != 'g' or '#' not in m)):
             yield (n, a+s+m+w+t)
 
 @testgen(case_a1_iu)
@@ -423,7 +425,7 @@ def test_int_unsigned():
 
     numbers = integer_test_cases(2**32, False)
     aligns  = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
-    types   = [ '', 'd', 'o', 'x', 'X' ]
+    types   = [ '', 'd', 'o', 'x', 'X', 'g' ]
     signs   = [ '', '+', '-', ' ' ]
     mods    = [ '', '0', '#', '#0' ]
     widths  = [ '', '6', '12' ]
@@ -432,7 +434,9 @@ def test_int_unsigned():
                                            mods, widths, types):
         # Skip '0' modifier with explicit alignment.
         # Python allows this combination, fmt.cc doesn't.
-        if a == '' or '0' not in m:
+        # Also skip '#' with 'g', which is not allowed by either.
+        if ((a == '' or '0' not in m) and
+            (t != 'g' or '#' not in m)):
             yield (n, a+s+m+w+t)
 
 # Test very large numbers with a reduced set of format modifiers.
