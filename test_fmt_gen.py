@@ -14,6 +14,7 @@ import curses.ascii
 import itertools
 import json
 import math
+import re
 import sys
 import textwrap
 
@@ -25,6 +26,14 @@ def redent(text, indent):
     if isinstance(indent, int) or isinstance(indent, long):
         indent = ' '*indent
     return '\n'.join(indent+l for l in textwrap.dedent(text).split('\n'))
+
+_tosymbol_re = re.compile(r"[^A-Za-z0-9_]+")
+def tosymbol(name):
+    """Make 'name' into a valid C++ symbol."""
+    name = _tosymbol_re.sub("_", name)
+    if name[0] in "0123456789_":
+        name = "N"+name
+    return name
 
 class TestCaseType(object):
     """POD structure containing all information required for one subtest."""
@@ -160,6 +169,7 @@ class TestBlock(object):
                 self.name = self.name[5:]
         else:
             self.name = name
+        self.symbol = tosymbol(self.name)
 
         if self.name in self.allblocks:
             raise RuntimeError("duplicate test block name: " + self.name)
@@ -172,7 +182,7 @@ class TestBlock(object):
 
     def write_cases(self, outf):
         outf.write("const {0} tc_{1}[] = {{\n"
-                   .format(self.casetype.name, self.name))
+                   .format(self.casetype.name, self.symbol))
         count = 0
         for case in self.generator():
             self.casetype.write_case(outf, case)
@@ -183,7 +193,8 @@ class TestBlock(object):
         pass
 
     def write_process_call(self, outf):
-        outf.write('  success &= process("{0}", tc_{0});\n'.format(self.name))
+        outf.write('  success &= process("{0}", tc_{1});\n'
+                   .format(self.name, self.symbol))
 
 class VarTB(TestBlock):
     """A block of tests which reuses an existing block with a different
@@ -202,33 +213,35 @@ class VarTB(TestBlock):
     def __init__(self, depblock, p1name, p1body):
         self.depblock = depblock
         self.p1name = p1name
+        self.p1sym  = tosymbol(p1name)
         self.p1body = redent(p1body, 2)
 
         TestBlock.__init__(self, depblock.casetype, lambda: [],
-                           depblock.name + "_" + p1name)
+                           depblock.name + " (" + p1name + ")")
 
     def write_cases(self, outf):
         pass
 
     def write_process_fn(self, outf):
         vs = ", ".join("v"+str(i) for i in range(len(self.casetype.vtypes)))
-        outf.write(self.process_template.format(self.p1name,
+        outf.write(self.process_template.format(self.p1sym,
                                                 self.casetype.name,
                                                 self.p1body, vs))
 
     def write_process_call(self, outf):
         outf.write('  success &= process("{0}", tc_{1}, process1_{2});\n'
-                   .format(self.name, self.depblock.name, self.p1name))
+                   .format(self.name, self.depblock.symbol, self.p1sym))
 
 class testgen(object):
     """Decorator to facilitate creation of TestBlocks from test
        generator functions."""
-    def __init__(self, casetype):
+    def __init__(self, casetype, name):
         self.casetype = casetype
+        self.name = name
     def __call__(self, fn):
-        return TestBlock(self.casetype, fn)
+        return TestBlock(self.casetype, fn, self.name)
 
-@testgen(case_a0)
+@testgen(case_a0, "format-spec syntax errors")
 def test_syntax_errors():
     return (x if isinstance(x, tuple) else (x,x) for x in [
         "no error",
@@ -276,7 +289,7 @@ def test_syntax_errors():
         "no plan to support <{0!b}>",
         ])
 
-@testgen(case_a1_cs)
+@testgen(case_a1_cs, "formatting strings")
 def test_str():
 
     words = [ '', 'i', 'of', 'sis', 'fice', 'drisk', 'elanet', 'hippian',
@@ -300,39 +313,39 @@ def test_str():
                 for p in xrange(0, maxw, 3):
                     yield (r, '{}{}.{}'.format(a, w, p))
 
-test_str_stdstr = VarTB(test_str, "std_string",
+test_str_stdstr = VarTB(test_str, "std::string",
                         "string v0(c.v0);")
-test_str_stdexc = VarTB(test_str, "std_exception",
+test_str_stdexc = VarTB(test_str, "std::exception",
                         "logic_error v0(c.v0);")
-test_str_csconv = VarTB(test_str, "cstr_conversion", """\
+test_str_csconv = VarTB(test_str, "conversion to char*", """\
                           struct ts {
                             const char* s;
                             ts(const char* s_) : s(s_) {}
                             operator const char* () const { return s; }
                           };
                           ts v0(c.v0);""")
-test_str_csstr  = VarTB(test_str, "cstr_str", """\
+test_str_csstr  = VarTB(test_str, "str() method (char *)", """\
                           struct ts {
                             const char* s;
                             ts(const char *s_) : s(s_) {}
                             const char* str() const { return s; }
                           };
                           ts v0(c.v0);""")
-test_str_cscstr = VarTB(test_str, "cstr_c_str", """\
+test_str_cscstr = VarTB(test_str, "c_str() method", """\
                           struct ts {
                             const char *s;
                             ts(const char *s_) : s(s_) {}
                             const char* c_str() const { return s; }
                           };
                           ts v0(c.v0);""")
-test_str_ssconv = VarTB(test_str, "std_string_conv", """\
+test_str_ssconv = VarTB(test_str, "conversion to std::string", """\
                           struct ts {
                             const char *s;
                             ts(const char *s_) : s(s_) {}
                             operator string() const { return string(s); }
                           };
                           ts v0(c.v0);""")
-test_str_ssstr  = VarTB(test_str, "std_string_str", """\
+test_str_ssstr  = VarTB(test_str, "str() method (std::string)", """\
                           struct ts {
                             const char *s;
                             ts(const char *s_) : s(s_) {}
@@ -340,7 +353,7 @@ test_str_ssstr  = VarTB(test_str, "std_string_str", """\
                           };
                           ts v0(c.v0);""")
 
-@testgen(case_a1_c)
+@testgen(case_a1_c, "formatting chars")
 def test_char():
     chars  = "a!'0\t"
     types  = [ '', 'c', 'd', 'o', 'x', 'X' ]
@@ -399,7 +412,7 @@ def float_test_cases():
                                      abs(x),
                                      0 if x>=0 else 1))
 
-@testgen(case_a1_is)
+@testgen(case_a1_is, "formatting signed ints")
 def test_int_signed():
 
     numbers = integer_test_cases(2**32, True)
@@ -418,7 +431,7 @@ def test_int_signed():
             (t != 'g' or '#' not in m)):
             yield (n, a+s+m+w+t)
 
-@testgen(case_a1_iu)
+@testgen(case_a1_iu, "formatting unsigned ints")
 def test_int_unsigned():
 
     numbers = integer_test_cases(2**32, False)
@@ -438,7 +451,7 @@ def test_int_unsigned():
             yield (n, a+s+m+w+t)
 
 # Test very large numbers with a reduced set of format modifiers.
-@testgen(case_a1_lls)
+@testgen(case_a1_lls, "formatting signed long longs")
 def test_long_signed():
     numbers = integer_test_cases(2**64, True)
     types   = [ '', 'd', 'o', 'x', 'X' ]
@@ -447,7 +460,7 @@ def test_long_signed():
     for (n,t,s,m) in itertools.product(numbers, types, signs, mods):
         yield (n, s+m+t)
 
-@testgen(case_a1_llu)
+@testgen(case_a1_llu, "formatting unsigned long longs")
 def test_long_unsigned():
     numbers = integer_test_cases(2**64, False)
     types   = [ '', 'd', 'o', 'x', 'X' ]
@@ -456,7 +469,7 @@ def test_long_unsigned():
     for (n,t,s,m) in itertools.product(numbers, types, signs, mods):
         yield (n, s+m+t)
 
-@testgen(case_a1_f)
+@testgen(case_a1_f, "formatting floats")
 def test_float():
 
     numbers = float_test_cases()
