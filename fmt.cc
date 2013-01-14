@@ -187,7 +187,7 @@ parse_subst(const char *p, size_t default_index, format_spec& spec)
   char *endp;
   if (*p >= '0' && *p <= '9') {
     spec.arg_index = strtoul(p, &endp, 10);
-    if (endp == p) goto error; // this shouldn't happen, but we check anyway
+    assert(endp > p);
     p = endp;
   } else if (*p == 'm') {
     spec.arg_index = format_spec::i_errno;
@@ -261,7 +261,7 @@ parse_subst(const char *p, size_t default_index, format_spec& spec)
   if (*p >= '0' && *p <= '9') {
     spec.has_width = true;
     spec.width = strtoul(p, &endp, 10);
-    if (endp == p) goto error; // this shouldn't happen, but we check anyway
+    assert(endp > p);
     p = endp;
   }
 
@@ -269,7 +269,7 @@ parse_subst(const char *p, size_t default_index, format_spec& spec)
     p++;
     spec.has_precision = true;
     spec.precision = strtoul(p, &endp, 10);
-    if (endp == p) goto error; // this case _can_ happen
+    if (endp == p) goto error; // no number present after '.'
     p = endp;
   }
 
