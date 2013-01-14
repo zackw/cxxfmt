@@ -302,6 +302,7 @@ def test_str():
     for r in words:
         for a in aligns:
             yield (r, a)
+            yield (r, a+'s')
 
             for w in xrange(1, maxw, 3):
                 yield (r, '{}{}'.format(a, w))
@@ -356,7 +357,7 @@ test_str_ssstr  = VarTB(test_str, "str() method (std::string)", """\
 @testgen(case_a1_c, "formatting chars")
 def test_char():
     chars  = "a!'0\t"
-    types  = [ '', 'c', 'd', 'o', 'x', 'X' ]
+    types  = [ '', 'c', 's', 'd', 'o', 'x', 'X' ]
     aligns = [ '', '<', '>', '^', 'L<', 'R>', 'C^' ]
     widths = [ '', '1', '3', '4' ]
     precs  = [ '', '.0', '.1', '.3', '.4' ]
