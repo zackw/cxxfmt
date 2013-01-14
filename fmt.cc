@@ -331,14 +331,14 @@ formatter::parse_format_string(const char *str)
       } else {
         format_spec spec;
         const char *endp = parse_subst(p+1, default_index, spec);
-        // N.B. format_spec::i_invalid and ::i_errno are guaranteed
-        // to be larger than specs.size() (being size_t(-1) and
-        // size_t(-2) respectively).
-        if (spec.arg_index >= specs.size() &&
-            spec.arg_index != format_spec::i_errno) {
+        if (spec.arg_index == format_spec::i_invalid) {
           cseg.append(BEGIN_ERRMSG);
           cseg.append(p, endp - p);
           cseg.append(END_ERRMSG);
+        } else if (spec.arg_index >= specs.size() &&
+                   spec.arg_index != format_spec::i_errno) {
+          // Spec requests conversion of an actual argument that isn't there.
+          cseg.append(BEGIN_ERRMSG "[missing]" END_ERRMSG);
         } else {
           segs.push_back(cseg);
           segs.push_back(string());
