@@ -412,26 +412,23 @@ do_alignment(const string &s, const format_spec &spec,
     if (align == '\0')
       align = (type == 's' || type == 'c') ? '<' : '>';
 
-    switch (align) {
-    case '<':
+    if (align == '<') {
       out.append(s);
       out.append(pad, spec.fill);
-      break;
 
-    case '>':
+    } else if (align == '>') {
       out.append(pad, spec.fill);
       out.append(s);
-      break;
 
-    case '^':
+    } else if (align == '^') {
       // If there are an odd number of padding characters required,
       // put one more on the right.
       out.append(pad/2, spec.fill);
       out.append(s);
       out.append(pad/2 + pad%2, spec.fill);
-      break;
 
-    case '=': {
+    } else {
+      assert(align == '=');
       unsigned int leading = 0;
       if (type != 's' && type != 'c' && (s[0] == '-' || spec.sign != '-'))
         leading = 1;
@@ -441,10 +438,6 @@ do_alignment(const string &s, const format_spec &spec,
       out.append(s.substr(0, leading));
       out.append(pad, spec.fill);
       out.append(s.substr(leading));
-    } break;
-
-    default:
-      throw "impossible alignment specifier";
     }
   }
 
