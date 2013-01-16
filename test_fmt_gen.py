@@ -145,14 +145,11 @@ def case_a1_c(val, spec):
     else:
         cval = "'\\x{:02x}'".format(ord(val))
     # Python doesn't support printing characters with numeric
-    # typecodes (which fmt.cc does).
-    if len(spec) > 0 and spec[-1] in "doxX":
+    # typecodes (which fmt.cc does). 'c' counts as a numeric
+    # typecode.
+    if len(spec) > 0 and spec[-1] in "cdoxX":
         val = ord(val)
-    # Python doesn't have the 'c' typecode (characters being
-    # just strings of length 1 to it)
     ospec = spec
-    if len(spec) > 0 and spec[-1] == 'c':
-        ospec = ospec[:-1] + 's'
     return case_a1(spec, ospec, val, cval)
 
 class TestBlock(object):
@@ -364,7 +361,7 @@ def test_char():
 
     for (r, t, a, w, p) in itertools.product(chars, types, aligns,
                                              widths, precs):
-        if (t != '' and t != 'c') and p != '':
+        if (t != '' and t != 's') and p != '':
             continue # integer formatting doesn't allow precision
         yield (r, a+w+p+t)
 

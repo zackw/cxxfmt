@@ -410,7 +410,7 @@ do_alignment(const string &s, const format_spec &spec,
     char align = spec.align;
 
     if (align == '\0')
-      align = (type == 's' || type == 'c') ? '<' : '>';
+      align = (type == 's') ? '<' : '>';
 
     if (align == '<') {
       out.append(s);
@@ -672,10 +672,11 @@ formatter::format_sub(size_t i, unsigned char val) noexcept
 
     try {
       if (spec->type == '\0')
-        spec->type = 'c';
+        spec->type = 's';
 
       switch (spec->type) {
       case 'c':
+      case 's':
       default:
         do_format_char(val, *spec, segs.at(spec->target));
         break;
