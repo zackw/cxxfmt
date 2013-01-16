@@ -95,8 +95,10 @@ def case_a0(spec, output):
     return spec + ", " + output
 
 def case_a1(spec, override_spec, val, cval):
-    spec = '{:' + spec + '}'
-    override_spec = '{:' + override_spec + '}'
+    if '{' not in spec:
+        spec = '{:' + spec + '}'
+    if '{' not in override_spec:
+        override_spec = '{:' + override_spec + '}'
     formatted = override_spec.format(val)
     return json.dumps(spec) + ", " + json.dumps(formatted) + ", " + cval
 
@@ -131,7 +133,7 @@ def case_a1_f(val, spec):
     ospec = spec
     # Python's no-typecode behavior for floats is not exactly
     # any of 'e', 'f', or 'g'.  fmt.cc treats it the same as 'g'.
-    if len(spec) == 0 or spec[-1] not in "eEfFgG":
+    if len(spec) == 0 or ('{' not in spec and spec[-1] not in "eEfFgG"):
         ospec += 'g'
     return case_a1(spec, ospec, val, str(val))
 
@@ -147,7 +149,7 @@ def case_a1_c(val, spec):
     # Python doesn't support printing characters with numeric
     # typecodes (which fmt.cc does). 'c' counts as a numeric
     # typecode.
-    if len(spec) > 0 and spec[-1] in "cdoxX":
+    if len(spec) > 0 and spec[-1] in "cdoxX}":
         val = ord(val)
     ospec = spec
     return case_a1(spec, ospec, val, cval)
@@ -173,9 +175,7 @@ class TestBlock(object):
         self.allblocks[self.name] = self
 
     def __cmp__(self, other):
-        # We want all tests that use the same casetype to be grouped together.
-        return (cmp(self.casetype, other.casetype) or
-                cmp(self.name, other.name))
+        return cmp(self.name, other.name)
 
     def write_cases(self, outf):
         outf.write("const {0} tc_{1}[] = {{\n"
@@ -207,11 +207,19 @@ class VarTB(TestBlock):
 
           """)
 
+    p1names = set()
+
     def __init__(self, depblock, p1name, p1body):
         self.depblock = depblock
         self.p1name = p1name
         self.p1sym  = tosymbol(p1name)
         self.p1body = redent(p1body, 2)
+
+        if p1name in self.p1names:
+            self.shared_p1 = True
+        else:
+            self.p1names.add(p1name)
+            self.shared_p1 = False
 
         TestBlock.__init__(self, depblock.casetype, lambda: [],
                            depblock.name + " (" + p1name + ")")
@@ -220,6 +228,7 @@ class VarTB(TestBlock):
         pass
 
     def write_process_fn(self, outf):
+        if self.shared_p1: return
         vs = ", ".join("v"+str(i) for i in range(len(self.casetype.vtypes)))
         outf.write(self.process_template.format(self.p1sym,
                                                 self.casetype.name,
@@ -488,6 +497,34 @@ def test_float():
 # precision, for fear of hitting variance between floating-point
 # conversion libraries.
 test_float_dbl = VarTB(test_float, "double", "double v0 = c.v0;")
+
+@testgen(case_a1_f, "multiple specs one argument (float)")
+def test_2s1a_float():
+    for n in float_test_cases():
+        yield (n, "{0:12.6e} {0:<+4f} {0:.6g}")
+
+@testgen(case_a1_is, "multiple specs one argument (signed int)")
+def test_2s1a_sint():
+    for n in integer_test_cases(2**8, True):
+        yield (n, "{0:d} {0:o} {0:x}")
+
+@testgen(case_a1_iu, "multiple specs one argument (unsigned int)")
+def test_2s1a_uint():
+    for n in integer_test_cases(2**8, False):
+        yield (n, "{0:d} {0:o} {0:x}")
+
+@testgen(case_a1_c, "multiple specs one argument (char)")
+def test_2s1a_char():
+    for c in "a!'0\t":
+        yield (c, "{0:c} {0:o}")
+
+@testgen(case_a1_cs, "multiple specs one argument (str)")
+def test_2s1a_str():
+    for c in [ "", "i", "of", "sis", "fice", "drisk" ]:
+        yield (c, "{0:s} {0:<5} {0:>10s} {0:^15}")
+
+test_2s1a_stdstr = VarTB(test_2s1a_str, "std::string",
+                         "string v0(c.v0);")
 
 skeleton_0 = r"""// Tester for cxxfmt.
 

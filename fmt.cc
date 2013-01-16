@@ -667,9 +667,8 @@ formatter::format_sub(size_t i, unsigned char val) noexcept
   format_spec *spec = &specs[i];
   if (spec->arg_index == format_spec::i_invalid)
     return; // argument not used
+  assert(spec->arg_index == i);
   for (;;) {
-    assert(spec->arg_index == i);
-
     try {
       if (spec->type == '\0')
         spec->type = 's';
@@ -713,9 +712,8 @@ formatter::format_sub(size_t i, long long val) noexcept
   format_spec *spec = &specs[i];
   if (spec->arg_index == format_spec::i_invalid)
     return; // argument not used
+  assert(spec->arg_index == i);
   for (;;) {
-    assert(spec->arg_index == i);
-
     try {
       if (spec->type == '\0')
         spec->type = 'd';
@@ -758,9 +756,8 @@ formatter::format_sub(size_t i, unsigned long long val) noexcept
   format_spec *spec = &specs[i];
   if (spec->arg_index == format_spec::i_invalid)
     return; // argument not used
+  assert(spec->arg_index == i);
   for (;;) {
-    assert(spec->arg_index == i);
-
     try {
       if (spec->type == '\0')
         spec->type = 'u';
@@ -805,9 +802,8 @@ formatter::format_sub(size_t i, const void *val) noexcept
   format_spec *spec = &specs[i];
   if (spec->arg_index == format_spec::i_invalid)
     return; // argument not used
+  assert(spec->arg_index == i);
   for (;;) {
-    assert(spec->arg_index == i);
-
     try {
       if (spec->type == '\0')
         spec->type = 'x';
@@ -843,9 +839,8 @@ formatter::format_sub(size_t i, double val) noexcept
   format_spec *spec = &specs[i];
   if (spec->arg_index == format_spec::i_invalid)
     return; // argument not used
+  assert(spec->arg_index == i);
   for (;;) {
-    assert(spec->arg_index == i);
-
     try {
       if (spec->type == '\0')
         spec->type = 'g';
@@ -876,9 +871,8 @@ formatter::format_sub(size_t i, const char *val) noexcept
                        ? &first_errno_spec : &specs[i]);
   if (spec->arg_index == format_spec::i_invalid)
     return; // argument not used
+  assert(spec->arg_index == i);
   for (;;) {
-    assert(spec->arg_index == i);
-
     try {
       if (spec->type == '\0')
         spec->type = 's';
@@ -907,9 +901,8 @@ formatter::format_sub(size_t i, const string &val) noexcept
   format_spec *spec = &specs[i];
   if (spec->arg_index == format_spec::i_invalid)
     return; // argument not used
+  assert(spec->arg_index == i);
   for (;;) {
-    assert(spec->arg_index == i);
-
     try {
       if (spec->type == '\0')
         spec->type = 's';
