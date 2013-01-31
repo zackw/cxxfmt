@@ -468,6 +468,28 @@ def test_format_enum():
   success &= process1_T("bar {:08x}", "bar 00010001", bar);
 """
 
+@special_testgen("printing strerror(errno)")
+def test_errno():
+    call_template = (
+        "errno = {0};\n"
+        "success &= process1_T(\"{1}\",\n"
+        "                  format(\"{2}\", 42, strerror({0})).c_str(), 42);\n")
+
+    # these errno constants should exist everywhere
+    errnos = [ "EACCES", "ENOENT", "EINVAL", "EEXIST" ]
+
+    formats = [ ("{m}",          "{1}"),
+                ("{m:<50}",      "{1:<50}"),
+                ("{0} {m}",      "{0} {1}"),
+                ("{m} {0}",      "{1} {0}"),
+                ("{m} {0} {m}",  "{1} {0} {1}"),
+                ("{0} {m} {0}",  "{0} {1} {0}"),
+                ("{m}{0}{m}{0}", "{1}{0}{1}{0}"),
+                ("{m}{m}{0}{0}", "{1}{1}{0}{0}") ]
+
+    return "\n".join(call_template.format(e, f[0], f[1])
+                     for e in errnos
+                     for f in formats)
 
 @testgen(case_a1_cs, "formatting strings")
 def test_str():
