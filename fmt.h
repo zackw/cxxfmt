@@ -7,10 +7,9 @@
 #ifndef CXXFMT_FMT_H__
 #define CXXFMT_FMT_H__
 
-#include <stddef.h>
-
-#include <type_traits>
+#include <cstddef>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace fmt {

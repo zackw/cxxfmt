@@ -4,21 +4,29 @@
 // Software License, Version 1.0.  See the file LICENSE or
 // http://www.boost.org/LICENSE_1_0.txt for detailed terms.
 
+#include <cassert>  // must be first
+
 #include <fmt.h>
+
+#include <cerrno>
+#include <cstdlib>  // strtoul
+#include <cstring>  // strerror
+
 #include <exception>
 #include <numeric>
 #include <limits>
 #include <sstream>
 
-#include <assert.h>
-#include <errno.h>   // errno
-#include <stdlib.h>  // strtoul
-#include <string.h>  // strerror
-
-using std::numeric_limits;
+using std::conditional;
+using std::enable_if;
+using std::exception;
+using std::is_integral;
+using std::is_same;
+using std::is_signed;
+using std::is_unsigned;
+using std::make_unsigned;
 using std::string;
-using std::ostringstream;
-using std::vector;
+using std::terminate;
 
 namespace {
 
@@ -28,33 +36,33 @@ namespace {
 // on size_t being the same size as a pointer either (thanks ever so
 // much, Microsoft).
 
-typedef std::conditional<
+typedef conditional<
   sizeof(void *) == sizeof(unsigned int), unsigned int,
-  typename std::conditional<
+  typename conditional<
     sizeof(void *) == sizeof(unsigned long), unsigned long,
-    typename std::conditional<
+    typename conditional<
       sizeof(void *) == sizeof(unsigned long long), unsigned long long,
       double // failure marker
     >::type
   >::type
 >::type uintptrt;
 
-static_assert(!std::is_same<uintptrt, double>::value,
+static_assert(!is_same<uintptrt, double>::value,
               "failed to detect an integral type with the width of 'void *'");
 
 // Similarly for 'double'.
-typedef std::conditional<
+typedef conditional<
   sizeof(double) == sizeof(unsigned int), unsigned int,
-  typename std::conditional<
+  typename conditional<
     sizeof(double) == sizeof(unsigned long), unsigned long,
-    typename std::conditional<
+    typename conditional<
       sizeof(double) == sizeof(unsigned long long), unsigned long long,
       double // failure marker
     >::type
   >::type
 >::type uintdoublet;
 
-static_assert(!std::is_same<uintdoublet, double>::value,
+static_assert(!is_same<uintdoublet, double>::value,
               "failed to detect an integral type with the width of 'double'");
 
 // Ensure that we can print values of these types without casting.
@@ -70,20 +78,20 @@ static_assert(sizeof(ptrdiff_t) <= sizeof(long long),
 
 template <typename T>
 bool
-is_negative(T t, typename std::enable_if<std::is_signed<T>::value>::type* = 0)
+is_negative(T t, typename enable_if<is_signed<T>::value>::type* = 0)
 {
   return t < 0;
 }
 
 template <typename T>
 bool
-is_negative(T, typename std::enable_if<std::is_unsigned<T>::value>::type* = 0)
+is_negative(T, typename enable_if<is_unsigned<T>::value>::type* = 0)
 {
   return false;
 }
 
-// std::make_unsigned causes a compile-time error if applied to a
-// floating-point type. std::conditional does not (reliably) prevent
+// make_unsigned causes a compile-time error if applied to a
+// floating-point type. conditional does not (reliably) prevent
 // this error.
 template <typename T, typename = void>
 struct unsigned_if_integral
@@ -92,10 +100,9 @@ struct unsigned_if_integral
 };
 
 template <typename T>
-struct unsigned_if_integral<T, typename std::enable_if<
-                                 std::is_integral<T>::value>::type>
+struct unsigned_if_integral<T, typename enable_if<is_integral<T>::value>::type>
 {
-  typedef typename std::make_unsigned<T>::type type;
+  typedef typename make_unsigned<T>::type type;
 };
 
 } // anonymous namespace
@@ -118,8 +125,8 @@ namespace fmt {
 // insert some sort of placeholder in place of whatever we were
 // formatting, and if that fails (perhaps due to OOM), crash.
 
-// We explicitly code catch (...) { std::terminate() } even though
-// 'noexcept' is currently defined to call std::terminate if an
+// We explicitly code catch (...) { terminate() } even though
+// 'noexcept' is currently defined to call terminate if an
 // exception is about to escape, for defensiveness against future
 // changes to this behavior (noexcept is considered not fully baked).
 
@@ -135,7 +142,7 @@ formatter::constructor_threw(const char *what) noexcept
     segs.resize(1);
     segs[0] = string(BEGIN_ERRMSG) + what + END_ERRMSG;
   } catch (...) {
-    std::terminate();
+    terminate();
   }
 }
 
@@ -145,17 +152,17 @@ formatter::formatsub_threw(const char *what, size_t target) noexcept
   try {
     segs.at(target) = string(BEGIN_ERRMSG) + what + END_ERRMSG;
   } catch (...) {
-    std::terminate();
+    terminate();
   }
 }
 
-std::string
+string
 formatter::finish_threw(const char *what) noexcept
 {
   try {
     return string(BEGIN_ERRMSG) + what + END_ERRMSG;
   } catch (...) {
-    std::terminate();
+    terminate();
   }
 }
 
@@ -182,6 +189,8 @@ formatter::finish_threw(const char *what) noexcept
 static const char *
 parse_subst(const char *p, size_t default_index, format_spec& spec)
 {
+  using std::strtoul;
+
   spec.arg_index = default_index;
 
   char *endp;
@@ -320,8 +329,8 @@ formatter::parse_format_string(const char *str)
 
   string cseg;
   size_t default_index = 0;
-  vector<format_spec> extras;  // Used only if there is more than one spec
-                               // referring to the same argument index.
+  std::vector<format_spec> extras; // Used only if there is more than one spec
+                                   // referring to the same argument index.
 
   for (const char *p = str; *p; ) {
     if (*p == '{') {
@@ -455,10 +464,10 @@ static void
 do_numeric_format(T val, const format_spec &spec,
                   char type, bool error, string &out)
 {
-  using std::ios_base;
+  using std::ios;
 
-  ostringstream os;
-  os.exceptions(ios_base::failbit|ios_base::badbit|ios_base::eofbit);
+  std::ostringstream os;
+  os.exceptions(ios::failbit|ios::badbit|ios::eofbit);
 
   // iostreams can mark positive values with '+' but not with a space,
   // so we do it ourselves in both cases.
@@ -499,21 +508,21 @@ do_numeric_format(T val, const format_spec &spec,
   // same as 'e', 'f', or 'g', and has an asymmetry that makes it hard
   // to duplicate with iostreams, so we diverge and default to 'g'.
   if (type == 'e' || type == 'E') {
-    os.setf(ios_base::scientific, ios_base::floatfield);
-    os.setf(ios_base::showpoint);
+    os.setf(ios::scientific, ios::floatfield);
+    os.setf(ios::showpoint);
   } else if (type == 'f' || type == 'F') {
-    os.setf(ios_base::fixed, ios_base::floatfield);
-    os.setf(ios_base::showpoint);
+    os.setf(ios::fixed, ios::floatfield);
+    os.setf(ios::showpoint);
   }
 
   // decimal is the default
   if (type == 'o')
-    os.setf(ios_base::oct, ios_base::basefield);
+    os.setf(ios::oct, ios::basefield);
   else if (type == 'x' || type == 'X')
-    os.setf(ios_base::hex, ios_base::basefield);
+    os.setf(ios::hex, ios::basefield);
 
   if (type == 'E' || type == 'F' || type == 'G' || type == 'X')
-    os.setf(ios_base::uppercase);
+    os.setf(ios::uppercase);
 
   os << uval;
 
@@ -611,7 +620,7 @@ do_format_char(unsigned long long val,
                string &out)
 {
   if ((spec.type == 'c' || spec.type == 's')
-      && val <= numeric_limits<unsigned char>::max()) {
+      && val <= std::numeric_limits<unsigned char>::max()) {
     // Most modifiers are ignored; just emit the character with
     // appropriate padding.  If the precision is zero, print the
     // empty string.
@@ -689,7 +698,7 @@ formatter::format_sub(size_t i, unsigned char val) noexcept
         break;
       }
 
-    } catch (std::exception const& e) {
+    } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
     } catch (const char *what) {
       formatsub_threw(what, spec->target);
@@ -733,7 +742,7 @@ formatter::format_sub(size_t i, long long val) noexcept
         break;
       }
 
-    } catch (std::exception const& e) {
+    } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
     } catch (const char *what) {
       formatsub_threw(what, spec->target);
@@ -777,7 +786,7 @@ formatter::format_sub(size_t i, unsigned long long val) noexcept
         break;
       }
 
-    } catch (std::exception const& e) {
+    } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
     } catch (const char *what) {
       formatsub_threw(what, spec->target);
@@ -816,7 +825,7 @@ formatter::format_sub(size_t i, const void *val) noexcept
       do_format_unsigned_int(uintptrt(val), *spec,
                              segs.at(spec->target));
 
-    } catch (std::exception const& e) {
+    } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
     } catch (const char *what) {
       formatsub_threw(what, spec->target);
@@ -846,7 +855,7 @@ formatter::format_sub(size_t i, double val) noexcept
         spec->type = 'g';
       do_format_float(val, *spec, segs.at(spec->target));
 
-    } catch (std::exception const& e) {
+    } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
     } catch (const char *what) {
       formatsub_threw(what, spec->target);
@@ -878,7 +887,7 @@ formatter::format_sub(size_t i, const char *val) noexcept
         spec->type = 's';
       do_format_cstr(val, *spec, segs.at(spec->target));
 
-    } catch (std::exception const& e) {
+    } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
     } catch (const char *what) {
       formatsub_threw(what, spec->target);
@@ -908,7 +917,7 @@ formatter::format_sub(size_t i, const string &val) noexcept
         spec->type = 's';
       do_format_str(val, *spec, segs.at(spec->target));
 
-    } catch (std::exception const& e) {
+    } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
     } catch (const char *what) {
       formatsub_threw(what, spec->target);
@@ -951,10 +960,10 @@ formatter::formatter(size_t nargs_, const char *msg) noexcept
 
     // If we're asked to print strerror(errno), take care of that now.
     if (first_errno_spec.target != format_spec::i_invalid) {
-      format_sub(format_spec::i_errno, strerror(saved_errno));
+      format_sub(format_spec::i_errno, std::strerror(saved_errno));
     }
 
-  } catch (std::exception const& e) {
+  } catch (exception const& e) {
     constructor_threw(e.what());
 
   } catch (const char *what) {
@@ -971,7 +980,7 @@ formatter::finish() noexcept
   try {
     return std::accumulate(segs.begin(), segs.end(), string(""));
 
-  } catch (std::exception const& e) {
+  } catch (exception const& e) {
     return finish_threw(e.what());
 
   } catch (const char *what) {
