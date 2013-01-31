@@ -154,6 +154,16 @@ def case_a1_c(val, spec):
     ospec = spec
     return case_a1(spec, ospec, val, cval)
 
+@caseprint( ("const char *", "const char *", "const char *") )
+def case_a3_s_s_s(spec, v1, v2, v3, exp=None):
+    if exp is None:
+        exp = spec.format(v1, v2, v3)
+    return (json.dumps(spec) + ", " +
+            json.dumps(exp) + ", " +
+            json.dumps(v1) + ", " +
+            json.dumps(v2) + ", " +
+            json.dumps(v3))
+
 class TestBlock(object):
     """One block of tests.  All tests in a block share the same
        'casetype'."""
@@ -526,6 +536,44 @@ def test_2s1a_str():
 test_2s1a_stdstr = VarTB(test_2s1a_str, "std::string",
                          "string v0(c.v0);")
 
+@testgen(case_a3_s_s_s, "exceptions thrown internally")
+def test_exceptions_internal():
+    # We have a custom ::operator new which will throw bad_alloc if it
+    # is asked to allocate more than 1152 bytes.  (None of the other
+    # tests need to allocate more than about 550 bytes at once.)  We
+    # use this to trigger exceptions at tailored locations.  In order
+    # to make it interesting we require more than one substitution
+    # slot.
+    tick = "tick"
+    boom = "boom"*(1156/4)
+    ping = "ping"*(1156/10)
+    dent = "\x1b[7mstd::bad_alloc\x1b[27m"
+
+    return [ ( boom, "", "", "", dent ),
+
+             ( "{} {} {}", tick, tick, tick, tick+" "+tick+" "+tick ),
+
+             ( "{} {} {}", boom, tick, tick, dent+" "+tick+" "+tick ),
+             ( "{} {} {}", tick, boom, tick, tick+" "+dent+" "+tick ),
+             ( "{} {} {}", tick, tick, boom, tick+" "+tick+" "+dent ),
+
+             ( "{} {} {}", tick, boom, boom, tick+" "+dent+" "+dent ),
+             ( "{} {} {}", boom, tick, boom, dent+" "+tick+" "+dent ),
+             ( "{} {} {}", boom, boom, tick, dent+" "+dent+" "+tick ),
+
+             ( "{} {} {}", boom, boom, boom, dent+" "+dent+" "+dent ),
+
+             ( "{} {} {}", ping, tick, tick, ping+" "+tick+" "+tick ),
+             ( "{} {} {}", tick, ping, tick, tick+" "+ping+" "+tick ),
+             ( "{} {} {}", tick, tick, ping, tick+" "+tick+" "+ping ),
+
+             # two pings one tick may or may not throw an exception
+             # depending on allocator behavior, so we don't try it
+
+             ( "{} {} {}", ping, ping, ping, dent ),
+           ]
+
+
 skeleton_0 = r"""// Tester for cxxfmt.
 
 // Copyright 2012 Zachary Weinberg <zackw@panix.com>.
@@ -537,7 +585,9 @@ skeleton_0 = r"""// Tester for cxxfmt.
 // Edit test_fmt.py instead.
 
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -549,6 +599,22 @@ using std::flush;
 using std::strcmp;
 using std::string;
 using fmt::format;
+
+// see test_exceptions_internal
+void *
+operator new(size_t n)
+{
+  if (n > 1152)
+    throw std::bad_alloc();
+  void* v = std::malloc(n);
+  if (!v) throw std::bad_alloc();
+  return v;
+}
+void
+operator delete(void *p)
+{
+  std::free(p);
+}
 
 namespace {
 
@@ -590,31 +656,54 @@ report(const char* spec, string const& got, const char* expected)
 
 MAKE_HAS_TRAIT(v0);
 MAKE_HAS_TRAIT(v1);
+MAKE_HAS_TRAIT(v2);
+MAKE_HAS_TRAIT(v3);
 
-template <typename T>
+template <typename... TS>
 static bool
-process1_T(const char *spec, const char *expected, T const& val)
+process1_T(const char *spec, const char *expected, TS&&... vs)
 {
-  string got(format(spec, val));
+  string got(format(spec, vs...));
   return report(spec, got, expected);
 }
 
-template <typename case_a0,
-          typename = typename std::enable_if<!has_v0<case_a0>::value>::type>
+template <typename case_,
+          typename = typename std::enable_if<!has_v0<case_>::value>::type>
 static bool
-process1_generic(const case_a0& c)
+process1_generic(const case_& c)
 {
   string got(format(c.spec));
   return report(c.spec, got, c.expected);
 }
 
-template <typename case_a1,
-          typename = typename std::enable_if<has_v0<case_a1>::value>::type,
-          typename = typename std::enable_if<!has_v1<case_a1>::value>::type>
+template <typename case_,
+          typename = typename std::enable_if<has_v0<case_>::value>::type,
+          typename = typename std::enable_if<!has_v1<case_>::value>::type>
 static bool
-process1_generic(const case_a1& c)
+process1_generic(const case_& c)
 {
   return process1_T(c.spec, c.expected, c.v0);
+}
+
+template <typename case_,
+          typename = typename std::enable_if<has_v0<case_>::value>::type,
+          typename = typename std::enable_if<has_v1<case_>::value>::type,
+          typename = typename std::enable_if<!has_v2<case_>::value>::type>
+static bool
+process1_generic(const case_& c)
+{
+  return process1_T(c.spec, c.expected, c.v0, c.v1);
+}
+
+template <typename case_,
+          typename = typename std::enable_if<has_v0<case_>::value>::type,
+          typename = typename std::enable_if<has_v1<case_>::value>::type,
+          typename = typename std::enable_if<has_v2<case_>::value>::type,
+          typename = typename std::enable_if<!has_v3<case_>::value>::type>
+static bool
+process1_generic(const case_& c)
+{
+  return process1_T(c.spec, c.expected, c.v0, c.v1, c.v2);
 }
 
 """
