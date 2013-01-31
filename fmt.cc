@@ -932,7 +932,7 @@ formatter::format_exc(size_t i, const char *what) noexcept
 void
 formatter::format_exc(size_t i) noexcept
 {
-  format_sub(i, generic_exception_msg);
+  format_sub(i, string(BEGIN_ERRMSG) + generic_exception_msg + END_ERRMSG);
 }
 
 // Public interface.

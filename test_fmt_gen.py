@@ -318,10 +318,28 @@ class VarTB(TestBlock):
         TestBlock.__init__(self, depblock.name + " (" + process1.name + ")",
                            depblock.casetype, process1, depblock.blocksym)
 
+class SpecialTB(TestBlock):
+    """A block of tests implemented using a custom 'process' function.
+       You are responsible for setting up whatever infrastructure it needs."""
+
+    def __init__(self, name, body):
+        TestBlock.__init__(self, name, case_a0, None, tosymbol(name))
+        self.processor = TestProcess(name, (), (), body)
+
+    def write_process_call(self, outf):
+        outf.write('  success &= process{1}("{0}");\n'
+                   .format(self.name, self.processor.symbol))
+
 def testgen(casetype, name):
-    """Decorator to facilitate creation of TestBlocks from test
+    """Decorator to facilitate creation of GenTBs from testcase
        generator functions."""
     return lambda fn: GenTB(name, casetype, fn)
+
+def special_testgen(name):
+    """Decorator to facilitate creation of SpecialTBs from testcase
+       generator functions.  In this case 'fn' is expected to return
+       the body of the custom process function as a string."""
+    return lambda fn: SpecialTB(name, fn())
 
 @testgen(case_a0, "format-spec syntax errors")
 def test_syntax_errors():
@@ -370,6 +388,86 @@ def test_syntax_errors():
         "no plan to support <{0!s}>",
         "no plan to support <{0!b}>",
         ])
+
+@special_testgen("exceptions thrown by conversion methods")
+def test_exceptions_in_conversion():
+    obj_template = ("struct {label} {{\n"
+                    "  {method} {{ throw {obj}; }}\n"
+                    "}};\n")
+    call_template = (
+        "success &= process1_T(\"{label} {{}}\",\n"
+        "                      \"{label} \\x1b[7m{expect}\\x1b[27m\",\n"
+        "                      {label}());\n")
+
+    methods = [ { "where":  "op_string",
+                  "method": "operator std::string() const" },
+                { "where":  "str_sig1",
+                  "method": "const char* str() const" },
+                { "where":  "str_sig2",
+                  "method": "std::string str() const" },
+                { "where":  "str_sig3",
+                  "method": "const std::string& str() const" },
+                { "where":  "c_str",
+                  "method": "const char* c_str() const" },
+                { "where":  "what",
+                  "method": "const char* what() const" } ]
+
+    crockery = [ { "what":   "logic_error",
+                   "obj":    "std::logic_error(\"{label}\")",
+                   "expect": "{label}" },
+                 { "what":   "exception",
+                   "obj":    "std::exception()",
+                   "expect": "std::exception" },
+                 { "what":   "string",
+                   "obj":    "\"{label}\"",
+                   "expect": "{label}" },
+                 { "what":   "unidentifiable",
+                   "obj":    "42",
+                   "expect": "[exception of unknown type]" } ]
+
+    objects = []
+    calls = []
+
+    for m in methods:
+        for c in crockery:
+            mc = { "where":  m['where'],
+                   "method": m['method'],
+                   "what":   c['what'],
+                   "obj":    c['obj'],
+                   "expect": c['expect'] }
+            mc['label'] = "tf_{where}_{what}".format(**mc)
+            mc['obj'] = mc['obj'].format(**mc)
+            mc['expect'] = mc['expect'].format(**mc)
+
+            objects.append(obj_template.format(**mc))
+            calls.append(call_template.format(**mc))
+
+    return "".join(objects) + "\n" + "".join(calls)
+
+@special_testgen("formatting enums")
+def test_format_enum():
+    return """\
+  enum X { A = 0, B = 1, C = 3, D = -1, E = 0x10001 };
+  X a = A, b = B, c = C, d = D, e = E;
+  success &= process1_T("A {}", "A 0", a);
+  success &= process1_T("B {}", "B 1", b);
+  success &= process1_T("C {}", "C 3", c);
+  success &= process1_T("D {}", "D -1", d);
+  success &= process1_T("E {:#x}", "E 0x10001", e);
+"""
+
+@special_testgen("formatting pointers")
+def test_format_enum():
+    return """\
+  void *foo     = 0;
+  struct T *bar = (struct T*)0x10001;
+  // n.b. since we know the values we assigned the pointers, we can get away
+  // with truncating them on 64-bit systems, which means we don't have to
+  // worry about divergent output.
+  success &= process1_T("foo {:08x}", "foo 00000000", foo);
+  success &= process1_T("bar {:08x}", "bar 00010001", bar);
+"""
+
 
 @testgen(case_a1_cs, "formatting strings")
 def test_str():

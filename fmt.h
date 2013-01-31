@@ -164,6 +164,8 @@ class formatter
   void format_sub(size_t n, const T& t,
                   typename std::enable_if<
                     std::is_constructible<std::string, T>::value
+                    // exclude char*, which has its own method
+                    && !std::is_same<T, char *>::value
                   >::type* = 0)
   { CXXFMT_FORMAT_SUB_WITH_CATCH(n, std::string(t)); }
 
