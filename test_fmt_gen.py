@@ -30,6 +30,7 @@ def redent(text, indent):
 _tosymbol_re = re.compile(r"[^A-Za-z0-9_]+")
 def tosymbol(name):
     """Make 'name' into a valid C++ symbol."""
+    if len(name) == 0: return name
     name = _tosymbol_re.sub("_", name)
     if name[0] in "0123456789_":
         name = "N"+name
@@ -42,14 +43,14 @@ class TestCaseType(object):
     def __init__(self, vtypes, caseprinter):
         self.vtypes = vtypes
         self.caseprinter = caseprinter
-        self.name = caseprinter.__name__
+        self.symbol = tosymbol(caseprinter.__name__)
 
-        if self.name in self.allcasetypes:
+        if self.symbol in self.allcasetypes:
             raise RuntimeError("duplicate casetype name: " + self.name)
-        self.allcasetypes[self.name] = self
+        self.allcasetypes[self.symbol] = self
 
     def __cmp__(self, other):
-        return cmp(self.name, other.name)
+        return cmp(self.symbol, other.symbol)
 
     def write_case(self, outf, args):
         try:
@@ -59,7 +60,7 @@ class TestCaseType(object):
             raise
 
     def write_decl(self, outf):
-        outf.write("struct {}\n".format(self.name))
+        outf.write("struct {}\n".format(self.symbol))
         outf.write("{\n  const char* spec;\n  const char* expected;\n")
         for i_t in enumerate(self.vtypes):
             outf.write("  {1} v{0};\n".format(*i_t))
@@ -164,50 +165,10 @@ def case_a3_s_s_s(spec, v1, v2, v3, exp=None):
             json.dumps(v2) + ", " +
             json.dumps(v3))
 
-class TestBlock(object):
-    """One block of tests.  All tests in a block share the same
-       'casetype'."""
-    allblocks = {}
-
-    def __init__(self, casetype, generator, name = None):
-        self.casetype = casetype
-        self.generator = generator
-        if name is None:
-            self.name = generator.__name__
-            if self.name.startswith('test_'):
-                self.name = self.name[5:]
-        else:
-            self.name = name
-        self.symbol = tosymbol(self.name)
-
-        if self.name in self.allblocks:
-            raise RuntimeError("duplicate test block name: " + self.name)
-        self.allblocks[self.name] = self
-
-    def __cmp__(self, other):
-        return cmp(self.name, other.name)
-
-    def write_cases(self, outf):
-        outf.write("const {0} tc_{1}[] = {{\n"
-                   .format(self.casetype.name, self.symbol))
-        count = 0
-        for case in self.generator():
-            self.casetype.write_case(outf, case)
-            count += 1
-        outf.write("}};\n// {} cases\n\n".format(count))
-
-    def write_process_fn(self, outf):
-        pass
-
-    def write_process_call(self, outf):
-        outf.write('  success &= process("{0}", tc_{1});\n'
-                   .format(self.name, self.symbol))
-
-class VarTB(TestBlock):
-    """A block of tests which reuses an existing block with a different
-       'process1' function."""
-
-    process_template = textwrap.dedent("""\
+class TestProcess1(object):
+    """Generate a function to process a single subtest of a particular
+       casetype."""
+    template = textwrap.dedent("""\
           static bool
           process1_{0}(const {1}& c)
           {{
@@ -217,45 +178,178 @@ class VarTB(TestBlock):
 
           """)
 
-    p1names = set()
+    all_process1_fns = {}
 
-    def __init__(self, depblock, p1name, p1body):
-        self.depblock = depblock
-        self.p1name = p1name
-        self.p1sym  = tosymbol(p1name)
-        self.p1body = redent(p1body, 2)
+    def __init__(self, casetype, name, body):
+        self.casetype = casetype
+        self.name = name
+        self.symbol = tosymbol(name)
+        self.body = redent(body, 2)
 
-        if p1name in self.p1names:
-            self.shared_p1 = True
+        if self.symbol in self.all_process1_fns:
+            raise RuntimeError("duplicate process1 symbol: \"{}\""
+                               .format(self.symbol))
+        self.all_process1_fns[self.symbol] = self
+
+    def __cmp__(self, other):
+        return (cmp(self.casetype, other.casetype) or
+                cmp(self.symbol, other.symbol))
+
+    def write_fn(self, outf):
+        vs = ", ".join("v"+str(i) for i in range(len(self.casetype.vtypes)))
+        outf.write(self.template.format(self.symbol,
+                                        self.casetype.symbol,
+                                        self.body,
+                                        vs))
+
+class TestProcess(object):
+    """Generate a function to process an entire block of tests.
+       This is used for test blocks that are too complicated to
+       fit the loop-over-a-big-POD-array-of-subtests paradigm."""
+    template = textwrap.dedent("""\
+        {2}static bool
+        process{0}(const char *tag{1})
+        {{
+          if (!quiet)
+            cout << "test " << tag << "..." << flush;
+          bool success = true;
+        {3}
+          if (!quiet) {{
+            if (success)
+              cout << " ok\\n";
+            else
+              cout << '\\n'; // failures printed already
+          }}
+          return success;
+        }}
+        """)
+
+    all_process_fns = {}
+
+    def __init__(self, name, args, targs, body):
+        symbol = tosymbol(name)
+        if symbol != "": symbol = "_"+symbol
+        if symbol in self.all_process_fns:
+            raise RuntimeError("duplicate process1 symbol: \"{}\""
+                               .format(self.symbol))
+        self.all_process_fns[symbol] = self
+
+        if isinstance(args, str):
+            sep = ",\n" + " "*(len(symbol)+8)
+            args = sep + args
+        elif args is not None and len(args) > 0:
+            sep = ",\n" + " "*(len(symbol)+8)
+            args = sep + sep.join(args)
         else:
-            self.p1names.add(p1name)
-            self.shared_p1 = False
+            args = ""
 
-        TestBlock.__init__(self, depblock.casetype, lambda: [],
-                           depblock.name + " (" + p1name + ")")
+        if isinstance(targs, str):
+            targs = "template <" + targs + ">\n"
+        elif targs is not None and len(targs) > 0:
+            targs = "template <" + ", ".join(targs) + ">\n"
+        else:
+            targs = ""
+
+        self.symbol = symbol
+        self.args = args
+        self.targs = targs
+        self.body = redent(body, 2)
+
+    def write_fn(self, outf):
+        outf.write(self.template.format(self.symbol, self.args, self.targs,
+                                        self.body))
+
+process_generic = TestProcess("",
+                              ("const caseT (&cases)[n]",
+                               "bool (*process1)(const caseT&)"),
+                              ("typename caseT", "size_t n"),
+                              """\
+  for (const caseT* c = cases; c < cases+n; c++)
+    success &= process1(*c);
+""")
+
+class TestBlock(object):
+    """One block of tests.  All tests in a block share the same
+       'casetype' and 'process1'."""
+    allblocks = {}
+
+    def __init__(self, name, casetype, process1, blocksym):
+        if name in self.allblocks:
+            raise RuntimeError("duplicate test block name: " + name)
+        self.allblocks[name] = self
+
+        if process1 is not None:
+            if casetype != process1.casetype:
+                raise RuntimeError("casetype mismatch: self={}, process1={}"
+                                   .format(casetype.symbol,
+                                           process1.casetype.symbol))
+        self.casetype = casetype
+        self.process1 = process1
+        self.name = name
+        self.blocksym = blocksym
+
+    def __cmp__(self, other):
+        return (cmp(self.casetype, other.casetype) or
+                cmp(self.name, other.name))
 
     def write_cases(self, outf):
         pass
 
-    def write_process_fn(self, outf):
-        if self.shared_p1: return
-        vs = ", ".join("v"+str(i) for i in range(len(self.casetype.vtypes)))
-        outf.write(self.process_template.format(self.p1sym,
-                                                self.casetype.name,
-                                                self.p1body, vs))
+    def write_process_call(self, outf):
+        if self.process1 is None:
+            p1sym = "generic"
+        else:
+            p1sym = self.process1.symbol
+        outf.write('  success &= process("{0}", tc_{1}, process1_{2});\n'
+                   .format(self.name, self.blocksym, p1sym))
+
+class GenTB(TestBlock):
+    """A block of tests generated from a generator function."""
+
+    def __init__(self, name, casetype, generator):
+        TestBlock.__init__(self, name, casetype, None, tosymbol(name))
+        self.generator = generator
+
+    def write_cases(self, outf):
+        outf.write("const {0} tc_{1}[] = {{\n"
+                   .format(self.casetype.symbol, self.blocksym))
+        count = 0
+        for case in self.generator():
+            self.casetype.write_case(outf, case)
+            count += 1
+        outf.write("}};\n// {} cases\n\n".format(count))
+
+
+class VarTB(TestBlock):
+    """A block of tests which reuses an existing block with a different
+       'process1' function."""
+
+    def __init__(self, depblock, process1):
+        TestBlock.__init__(self, depblock.name + " (" + process1.name + ")",
+                           depblock.casetype, process1, depblock.blocksym)
+
+class SpecialTB(TestBlock):
+    """A block of tests implemented using a custom 'process' function.
+       You are responsible for setting up whatever infrastructure it needs."""
+
+    def __init__(self, name, body):
+        TestBlock.__init__(self, name, case_a0, None, tosymbol(name))
+        self.processor = TestProcess(name, (), (), body)
 
     def write_process_call(self, outf):
-        outf.write('  success &= process("{0}", tc_{1}, process1_{2});\n'
-                   .format(self.name, self.depblock.symbol, self.p1sym))
+        outf.write('  success &= process{1}("{0}");\n'
+                   .format(self.name, self.processor.symbol))
 
-class testgen(object):
-    """Decorator to facilitate creation of TestBlocks from test
+def testgen(casetype, name):
+    """Decorator to facilitate creation of GenTBs from testcase
        generator functions."""
-    def __init__(self, casetype, name):
-        self.casetype = casetype
-        self.name = name
-    def __call__(self, fn):
-        return TestBlock(self.casetype, fn, self.name)
+    return lambda fn: GenTB(name, casetype, fn)
+
+def special_testgen(name):
+    """Decorator to facilitate creation of SpecialTBs from testcase
+       generator functions.  In this case 'fn' is expected to return
+       the body of the custom process function as a string."""
+    return lambda fn: SpecialTB(name, fn())
 
 @testgen(case_a0, "format-spec syntax errors")
 def test_syntax_errors():
@@ -305,6 +399,108 @@ def test_syntax_errors():
         "no plan to support <{0!b}>",
         ])
 
+@special_testgen("exceptions thrown by conversion methods")
+def test_exceptions_in_conversion():
+    obj_template = ("struct {label} {{\n"
+                    "  {method} {{ throw {obj}; }}\n"
+                    "}};\n")
+    call_template = (
+        "success &= process1_T(\"{label} {{}}\",\n"
+        "                      \"{label} \\x1b[7m{expect}\\x1b[27m\",\n"
+        "                      {label}());\n")
+
+    methods = [ { "where":  "op_string",
+                  "method": "operator string() const" },
+                { "where":  "str_sig1",
+                  "method": "const char* str() const" },
+                { "where":  "str_sig2",
+                  "method": "string str() const" },
+                { "where":  "str_sig3",
+                  "method": "const string& str() const" },
+                { "where":  "c_str",
+                  "method": "const char* c_str() const" },
+                { "where":  "what",
+                  "method": "const char* what() const" } ]
+
+    crockery = [ { "what":   "logic_error",
+                   "obj":    "logic_error(\"{label}\")",
+                   "expect": "{label}" },
+                 { "what":   "exception",
+                   "obj":    "exception()",
+                   "expect": "std::exception" },
+                 { "what":   "string",
+                   "obj":    "\"{label}\"",
+                   "expect": "{label}" },
+                 { "what":   "unidentifiable",
+                   "obj":    "42",
+                   "expect": "[exception of unknown type]" } ]
+
+    objects = []
+    calls = []
+
+    for m in methods:
+        for c in crockery:
+            mc = { "where":  m['where'],
+                   "method": m['method'],
+                   "what":   c['what'],
+                   "obj":    c['obj'],
+                   "expect": c['expect'] }
+            mc['label'] = "tf_{where}_{what}".format(**mc)
+            mc['obj'] = mc['obj'].format(**mc)
+            mc['expect'] = mc['expect'].format(**mc)
+
+            objects.append(obj_template.format(**mc))
+            calls.append(call_template.format(**mc))
+
+    return "".join(objects) + "\n" + "".join(calls)
+
+@special_testgen("formatting enums")
+def test_format_enum():
+    return """\
+  enum X { A = 0, B = 1, C = 3, D = -1, E = 0x10001 };
+  X a = A, b = B, c = C, d = D, e = E;
+  success &= process1_T("A {}", "A 0", a);
+  success &= process1_T("B {}", "B 1", b);
+  success &= process1_T("C {}", "C 3", c);
+  success &= process1_T("D {}", "D -1", d);
+  success &= process1_T("E {:#x}", "E 0x10001", e);
+"""
+
+@special_testgen("formatting pointers")
+def test_format_enum():
+    return """\
+  void *foo     = 0;
+  struct T *bar = (struct T*)0x10001;
+  // n.b. since we know the values we assigned the pointers, we can get away
+  // with truncating them on 64-bit systems, which means we don't have to
+  // worry about divergent output.
+  success &= process1_T("foo {:08x}", "foo 00000000", foo);
+  success &= process1_T("bar {:08x}", "bar 00010001", bar);
+"""
+
+@special_testgen("printing strerror(errno)")
+def test_errno():
+    call_template = (
+        "errno = {0};\n"
+        "success &= process1_T(\"{1}\",\n"
+        "                  format(\"{2}\", 42, strerror({0})).c_str(), 42);\n")
+
+    # these errno constants should exist everywhere
+    errnos = [ "EACCES", "ENOENT", "EINVAL", "EEXIST" ]
+
+    formats = [ ("{m}",          "{1}"),
+                ("{m:<50}",      "{1:<50}"),
+                ("{0} {m}",      "{0} {1}"),
+                ("{m} {0}",      "{1} {0}"),
+                ("{m} {0} {m}",  "{1} {0} {1}"),
+                ("{0} {m} {0}",  "{0} {1} {0}"),
+                ("{m}{0}{m}{0}", "{1}{0}{1}{0}"),
+                ("{m}{m}{0}{0}", "{1}{1}{0}{0}") ]
+
+    return "\n".join(call_template.format(e, f[0], f[1])
+                     for e in errnos
+                     for f in formats)
+
 @testgen(case_a1_cs, "formatting strings")
 def test_str():
 
@@ -330,45 +526,59 @@ def test_str():
                 for p in xrange(0, maxw, 3):
                     yield (r, '{}{}.{}'.format(a, w, p))
 
-test_str_stdstr = VarTB(test_str, "std::string",
-                        "string v0(c.v0);")
-test_str_stdexc = VarTB(test_str, "std::exception",
-                        "logic_error v0(c.v0);")
-test_str_csconv = VarTB(test_str, "conversion to char*", """\
+process1_str_stdstr = TestProcess1(case_a1_cs,
+                                   "std::string",
+                                   "string v0(c.v0);")
+
+test_str_stdstr = VarTB(test_str, process1_str_stdstr)
+test_str_stdexc = VarTB(test_str, TestProcess1(case_a1_cs,
+                                               "std::exception",
+                                               "logic_error v0(c.v0);"))
+test_str_csconv = VarTB(test_str, TestProcess1(case_a1_cs,
+                                               "conversion to char*",
+                                               """\
                           struct ts {
                             const char* s;
                             ts(const char* s_) : s(s_) {}
                             operator const char* () const { return s; }
                           };
-                          ts v0(c.v0);""")
-test_str_csstr  = VarTB(test_str, "str() method (char *)", """\
+                          ts v0(c.v0);"""))
+test_str_csstr  = VarTB(test_str, TestProcess1(case_a1_cs,
+                                               "str() method (char *)",
+                                               """\
                           struct ts {
                             const char* s;
                             ts(const char *s_) : s(s_) {}
                             const char* str() const { return s; }
                           };
-                          ts v0(c.v0);""")
-test_str_cscstr = VarTB(test_str, "c_str() method", """\
+                          ts v0(c.v0);"""))
+test_str_cscstr = VarTB(test_str, TestProcess1(case_a1_cs,
+                                               "c_str() method",
+                                               """\
                           struct ts {
                             const char *s;
                             ts(const char *s_) : s(s_) {}
                             const char* c_str() const { return s; }
                           };
-                          ts v0(c.v0);""")
-test_str_ssconv = VarTB(test_str, "conversion to std::string", """\
+                          ts v0(c.v0);"""))
+test_str_ssconv = VarTB(test_str, TestProcess1(case_a1_cs,
+                                               "conversion to std::string",
+                                               """\
                           struct ts {
                             const char *s;
                             ts(const char *s_) : s(s_) {}
                             operator string() const { return string(s); }
                           };
-                          ts v0(c.v0);""")
-test_str_ssstr  = VarTB(test_str, "str() method (std::string)", """\
+                          ts v0(c.v0);"""))
+test_str_ssstr  = VarTB(test_str, TestProcess1(case_a1_cs,
+                                               "str() method (std::string)",
+                                               """\
                           struct ts {
                             const char *s;
                             ts(const char *s_) : s(s_) {}
                             string str() const { return string(s); }
                           };
-                          ts v0(c.v0);""")
+                          ts v0(c.v0);"""))
 
 @testgen(case_a1_c, "formatting chars")
 def test_char():
@@ -384,8 +594,12 @@ def test_char():
             continue # integer formatting doesn't allow precision
         yield (r, a+w+p+t)
 
-test_char_uchar = VarTB(test_char, "unsigned", "unsigned char v0 = c.v0;")
-test_char_schar = VarTB(test_char, "signed", "signed char v0 = c.v0;")
+test_char_uchar = VarTB(test_char, TestProcess1(case_a1_c,
+                                                "unsigned",
+                                                "unsigned char v0 = c.v0;"))
+test_char_schar = VarTB(test_char, TestProcess1(case_a1_c,
+                                                "signed",
+                                                "signed char v0 = c.v0;"))
 
 # Helpers for the next several tests.  We want to test only a few
 # numbers, because there are so many modifier combinations to work
@@ -506,7 +720,9 @@ def test_float():
 # We don't attempt to test values not representable in single
 # precision, for fear of hitting variance between floating-point
 # conversion libraries.
-test_float_dbl = VarTB(test_float, "double", "double v0 = c.v0;")
+test_float_dbl = VarTB(test_float, TestProcess1(case_a1_f,
+                                                "double",
+                                                "double v0 = c.v0;"))
 
 @testgen(case_a1_f, "multiple specs one argument (float)")
 def test_2s1a_float():
@@ -533,8 +749,7 @@ def test_2s1a_str():
     for c in [ "", "i", "of", "sis", "fice", "drisk" ]:
         yield (c, "{0:s} {0:<5} {0:>10s} {0:^15}")
 
-test_2s1a_stdstr = VarTB(test_2s1a_str, "std::string",
-                         "string v0(c.v0);")
+test_2s1a_stdstr = VarTB(test_2s1a_str, process1_str_stdstr)
 
 @testgen(case_a3_s_s_s, "exceptions thrown internally")
 def test_exceptions_internal():
@@ -576,24 +791,24 @@ def test_exceptions_internal():
 
 skeleton_0 = r"""// Tester for cxxfmt.
 
-// Copyright 2012 Zachary Weinberg <zackw@panix.com>.
+// Copyright 2012, 2013 Zachary Weinberg <zackw@panix.com>.
 // Use, modification, and distribution are subject to the
 // Boost Software License, Version 1.0.  See the file LICENSE
 // or http://www.boost.org/LICENSE_1_0.txt for detailed terms.
 
-// This program was generated by test_fmt.py.  DO NOT EDIT.
-// Edit test_fmt.py instead.
+// This program was generated by test_fmt_gen.py.  DO NOT EDIT.
+// Edit test_fmt_gen.py instead.
+
+#include <fmt.h>
 
 #include <cstring>
 #include <cstdlib>
 #include <iostream>
 #include <new>
 #include <stdexcept>
-#include <string>
-#include <type_traits>
-#include <fmt.h>
 
 using std::cout;
+using std::exception;
 using std::logic_error;
 using std::flush;
 using std::strcmp;
@@ -709,25 +924,6 @@ process1_generic(const case_& c)
 """
 
 skeleton_2 = r"""
-template <typename caseT, size_t n>
-static bool
-process(const char *tag, const caseT (&cases)[n],
-        bool (*process1)(const caseT&) = process1_generic<caseT>)
-{
-  if (!quiet)
-    cout << "test " << tag << "..." << flush;
-  bool success = true;
-  for (const caseT* c = cases; c < cases+n; c++)
-    success &= process1(*c);
-  if (!quiet) {
-    if (success)
-      cout << " ok\n";
-    else
-      cout << '\n'; // failures printed already
-  }
-  return success;
-}
-
 } // anonymous namespace
 
 int
@@ -763,12 +959,16 @@ def main():
 
         outf.write(skeleton_1)
 
-        for b in blocks: b.write_process_fn(outf)
+        p1s = TestProcess1.all_process1_fns.values()
+        p1s.sort()
+        for p in p1s: p.write_fn(outf)
+
+        ps = TestProcess.all_process_fns.values()
+        ps.sort()
+        for p in ps: p.write_fn(outf)
 
         outf.write(skeleton_2)
-
         for b in blocks: b.write_process_call(outf)
-
         outf.write(skeleton_3)
 
 assert __name__ == '__main__'
