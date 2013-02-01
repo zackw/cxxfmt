@@ -703,8 +703,6 @@ formatter::format_sub(size_t i, unsigned char val) noexcept
 
     } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
-    } catch (const char *what) {
-      formatsub_threw(what, spec->target);
     } catch (...) {
       formatsub_threw(generic_exception_msg, spec->target);
     }
@@ -747,8 +745,6 @@ formatter::format_sub(size_t i, long long val) noexcept
 
     } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
-    } catch (const char *what) {
-      formatsub_threw(what, spec->target);
     } catch (...) {
       formatsub_threw(generic_exception_msg, spec->target);
     }
@@ -791,8 +787,6 @@ formatter::format_sub(size_t i, unsigned long long val) noexcept
 
     } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
-    } catch (const char *what) {
-      formatsub_threw(what, spec->target);
     } catch (...) {
       formatsub_threw(generic_exception_msg, spec->target);
     }
@@ -830,8 +824,6 @@ formatter::format_sub(size_t i, const void *val) noexcept
 
     } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
-    } catch (const char *what) {
-      formatsub_threw(what, spec->target);
     } catch (...) {
       formatsub_threw(generic_exception_msg, spec->target);
     }
@@ -860,8 +852,6 @@ formatter::format_sub(size_t i, double val) noexcept
 
     } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
-    } catch (const char *what) {
-      formatsub_threw(what, spec->target);
     } catch (...) {
       formatsub_threw(generic_exception_msg, spec->target);
     }
@@ -892,8 +882,6 @@ formatter::format_sub(size_t i, const char *val) noexcept
 
     } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
-    } catch (const char *what) {
-      formatsub_threw(what, spec->target);
     } catch (...) {
       formatsub_threw(generic_exception_msg, spec->target);
     }
@@ -922,8 +910,6 @@ formatter::format_sub(size_t i, const string &val) noexcept
 
     } catch (exception const& e) {
       formatsub_threw(e.what(), spec->target);
-    } catch (const char *what) {
-      formatsub_threw(what, spec->target);
     } catch (...) {
       formatsub_threw(generic_exception_msg, spec->target);
     }
@@ -968,10 +954,6 @@ formatter::formatter(size_t nargs_, const char *msg) noexcept
 
   } catch (exception const& e) {
     constructor_threw(e.what());
-
-  } catch (const char *what) {
-    constructor_threw(what);
-
   } catch (...) {
     constructor_threw(generic_exception_msg);
   }
@@ -985,10 +967,6 @@ formatter::finish() noexcept
 
   } catch (exception const& e) {
     return finish_threw(e.what());
-
-  } catch (const char *what) {
-    return finish_threw(what);
-
   } catch (...) {
     return finish_threw(generic_exception_msg);
   }
