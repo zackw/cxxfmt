@@ -603,7 +603,10 @@ do_format_float(double val,
       uintdoublet i;
     } u;
     u.d = val;
-    do_numeric_format(u.i, spec, spec.type, false, out);
+    // Cast to 'unsigned long long' after extraction, so the compiler
+    // won't instantiate another version of do_numeric_format
+    // if uintdoublet is a different type.
+    do_numeric_format((unsigned long long)(u.i), spec, spec.type, false, out);
   } return;
 
   default:
