@@ -289,8 +289,9 @@ class TestBlock(object):
         self.blocksym = blocksym
 
     def __cmp__(self, other):
-        return (cmp(self.casetype, other.casetype) or
-                cmp(self.name, other.name))
+        # These are sorted strictly by name because that makes the verbose
+        # test-runner output look better.
+        return cmp(self.name, other.name)
 
     def write_cases(self, outf):
         pass
@@ -471,11 +472,22 @@ def test_format_enum():
     return """\
   void *foo     = 0;
   struct T *bar = (struct T*)0x10001;
-  // n.b. since we know the values we assigned the pointers, we can get away
-  // with truncating them on 64-bit systems, which means we don't have to
-  // worry about divergent output.
   success &= process1_T("foo {:08x}", "foo 00000000", foo);
   success &= process1_T("bar {:08x}", "bar 00010001", bar);
+  success &= process1_T("foo {:#1o}", "foo 0o0", foo);
+  success &= process1_T("bar {:#1o}", "bar 0o200001", bar);
+  success &= process1_T("foo {0:#1o} {0:1d}", "foo 0o0 0", foo);
+  success &= process1_T("bar {0:#1o} {0:1d}", "bar 0o200001 65537", bar);
+  // The default pointer formatting depends on the size of a pointer.
+  static_assert(sizeof(void *)==4 ||
+                sizeof(void *)==8, "need specialization for your pointer size");
+  if (sizeof(void *) == 4) {
+    success &= process1_T("foo {}", "foo 00000000", foo);
+    success &= process1_T("bar {}", "bar 00010001", bar);
+  } else if (sizeof(void *) == 8) {
+    success &= process1_T("foo {}", "foo 0000000000000000", foo);
+    success &= process1_T("bar {}", "bar 0000000000010001", bar);
+  }
 """
 
 @special_testgen("printing strerror(errno)")
