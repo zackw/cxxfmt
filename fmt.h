@@ -84,9 +84,7 @@ class formatter
   // Internal subroutines.
   void parse_format_string(const char *str);
 
-  void constructor_threw(const char *what) noexcept;
-  void formatsub_threw(const char *what, size_t target) noexcept;
-  std::string finish_threw(const char *what) noexcept;
+  std::string diagnose_current_exception();
 
   // Base format categories.  These methods do the actual work of
   // rendering each substitution.
@@ -98,7 +96,7 @@ class formatter
   void format_sub(size_t, const void *) noexcept;
   void format_sub(size_t, const std::string &) noexcept;
 
-  void format_exc(size_t n, const char *what) noexcept;
+  // Called when a format_sub method throws an exception.
   void format_exc(size_t n) noexcept;
 
   // Adapters pick the appropriate base category for every possible
@@ -154,8 +152,6 @@ class formatter
   // code, so they must trap exceptions.
 #define CXXFMT_FORMAT_SUB_WITH_CATCH(n, expr)  do {                     \
     try                             { format_sub(n, expr); }            \
-    catch (std::exception const& e) { format_exc(n, e.what()); }        \
-    catch (const char *what)        { format_exc(n, what); }            \
     catch (...)                     { format_exc(n); }                  \
   } while (0)
 

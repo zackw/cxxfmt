@@ -9,13 +9,22 @@
 #include <fmt.h>
 
 #include <cerrno>
-#include <cstdlib>  // strtoul
+#include <cstdlib>  // free, strtoul
 #include <cstring>  // strerror
 
-#include <exception>
-#include <numeric>
 #include <limits>
+#include <numeric>
 #include <sstream>
+#include <stdexcept>
+
+// We assume <cxxabi.h> is available, and contains both
+// abi::__cxa_current_exception_type and abi::__cxa_demangle, if the
+// C++ runtime library declares itself as either libstdc++ or libc++.
+#if __GLIBCXX__ >= 20011118 || _LIBCPP_VERSION >= 1001
+  #define HAVE_CXA_EXCEPTION_INFO
+  #include <typeinfo>
+  #include <cxxabi.h>
+#endif
 
 using std::conditional;
 using std::enable_if;
@@ -117,53 +126,115 @@ namespace fmt {
 #define BEGIN_ERRMSG "\033[7m"
 #define END_ERRMSG "\033[27m"
 
-// Exception recovery.
-
 // The exposed interface guarantees not to throw exceptions under any
 // circumstances, which means we have to intercept all exceptions and
 // do something sensible.  "Sensible" in this case means: first try to
-// insert some sort of placeholder in place of whatever we were
-// formatting, and if that fails (perhaps due to OOM), crash.
+// insert a diagnostic marker in place of whatever we were formatting,
+// and if that fails (perhaps due to OOM), crash.
+//
+// To detect nested failures and crash, below, we explicitly code
+// catch (...) { terminate() } even though 'noexcept' is currently
+// defined to call terminate if an exception is about to escape, for
+// defensiveness against future changes to this behavior (noexcept is
+// considered not fully baked).
+//
+// This function handles figuring out what to print for an arbitrary
+// exception.  The general approach is borrowed from boost::exception,
+// with additional cleverness from Monotone.
 
-// We explicitly code catch (...) { terminate() } even though
-// 'noexcept' is currently defined to call terminate if an
-// exception is about to escape, for defensiveness against future
-// changes to this behavior (noexcept is considered not fully baked).
-
-static const char generic_exception_msg[] = "[exception of unknown type]";
-
-void
-formatter::constructor_threw(const char *what) noexcept
+template <size_t N>
+inline bool triml(string& s, const char (&leader)[N])
 {
-  try {
-    nargs = 0;
-    first_errno_spec.reset();
-    specs.clear();
-    segs.resize(1);
-    segs[0] = string(BEGIN_ERRMSG) + what + END_ERRMSG;
-  } catch (...) {
-    terminate();
+  if (!s.compare(0, N-1, leader)) {
+    s.erase(0, N-1);
+    return true;
+  } else {
+    return false;
   }
 }
 
-void
-formatter::formatsub_threw(const char *what, size_t target) noexcept
+static void
+trim_typename(string& tname)
 {
-  try {
-    segs.at(target) = string(BEGIN_ERRMSG) + what + END_ERRMSG;
-  } catch (...) {
-    terminate();
+  // We might have a mangled name here, so make a crude attempt to
+  // demangle it.  This only works for standard exception objects as
+  // mangled by the current g++ ABI.
+  if (triml(tname, "St") || triml(tname, "_ZSt") || triml(tname, "__ZSt")) {
+    size_t n = 0;
+    while (tname[n] >= '0' && tname[n] <= '9')
+      n++;
+    tname.erase(0, n-1);
+  } else {
+    triml(tname, "class ");
+    triml(tname, "std::");
   }
 }
 
 string
-formatter::finish_threw(const char *what) noexcept
+formatter::diagnose_current_exception()
 {
+  string message(BEGIN_ERRMSG "[");
+  string what;
+  string type;
+
+  // this looks silly but is the most portable way to determine
+  // whether the current exception is in fact a std::exception object.
   try {
-    return string(BEGIN_ERRMSG) + what + END_ERRMSG;
+    throw;
+  } catch (exception const& e) {
+    // extract what() and the type of the exception, if we can
+    what = e.what();
+    const char *tname = typeid(e).name();
+#ifdef HAVE_CXA_EXCEPTION_INFO
+    char *dname = abi::__cxa_demangle(tname, 0, 0, 0);
+    if (dname) {
+      type = dname;
+      std::free(dname);
+    } else
+#endif
+      type = tname;
+  } catch (char const* e) {
+    // we don't know why someone chose to throw a C string, but at
+    // least we can print it
+    what = e;
+    type = "text exception";
   } catch (...) {
-    terminate();
+    // well, hopefully at least we can extract the type
+#ifdef HAVE_CXA_EXCEPTION_INFO
+    const char *tname = abi::__cxa_current_exception_type()->name();
+    char *dname = abi::__cxa_demangle(tname, 0, 0, 0);
+    if (dname) {
+      type = dname;
+      std::free(dname);
+    } else
+      type = tname;
+#endif
   }
+
+  trim_typename(type);
+  trim_typename(what);
+
+  // special case some combinations that would produce unhelpful messages
+  if (type.empty() && what.empty()) {
+    type = "unidentifiable exception";
+  } else if (what == type) {
+    what.clear();
+    if (type == "exception")
+      type = "generic exception";
+    else if (type == "bad_alloc")
+      type = "out of memory";
+  } else if (what.empty()) {
+    what = type;
+    type = "unusual exception type";
+  }
+
+  message += type;
+  if (!type.empty() && !what.empty())
+    message += ": ";
+  message += what;
+  message += "]" END_ERRMSG;
+
+  return message;
 }
 
 // Parse a substitution.
@@ -700,11 +771,12 @@ formatter::format_sub(size_t i, unsigned char val) noexcept
         do_format_unsigned_int(val, *spec, segs.at(spec->target));
         break;
       }
-
-    } catch (exception const& e) {
-      formatsub_threw(e.what(), spec->target);
     } catch (...) {
-      formatsub_threw(generic_exception_msg, spec->target);
+      try {
+        segs.at(spec->target) = diagnose_current_exception();
+      } catch (...) {
+        terminate();
+      }
     }
 
     i = spec->next_this_index;
@@ -742,11 +814,12 @@ formatter::format_sub(size_t i, long long val) noexcept
         do_format_signed_int(val, *spec, segs.at(spec->target));
         break;
       }
-
-    } catch (exception const& e) {
-      formatsub_threw(e.what(), spec->target);
     } catch (...) {
-      formatsub_threw(generic_exception_msg, spec->target);
+      try {
+        segs.at(spec->target) = diagnose_current_exception();
+      } catch (...) {
+        terminate();
+      }
     }
 
     i = spec->next_this_index;
@@ -784,11 +857,12 @@ formatter::format_sub(size_t i, unsigned long long val) noexcept
         do_format_unsigned_int(val, *spec, segs.at(spec->target));
         break;
       }
-
-    } catch (exception const& e) {
-      formatsub_threw(e.what(), spec->target);
     } catch (...) {
-      formatsub_threw(generic_exception_msg, spec->target);
+      try {
+        segs.at(spec->target) = diagnose_current_exception();
+      } catch (...) {
+        terminate();
+      }
     }
 
     i = spec->next_this_index;
@@ -821,11 +895,12 @@ formatter::format_sub(size_t i, const void *val) noexcept
       }
       do_format_unsigned_int(uintptrt(val), *spec,
                              segs.at(spec->target));
-
-    } catch (exception const& e) {
-      formatsub_threw(e.what(), spec->target);
     } catch (...) {
-      formatsub_threw(generic_exception_msg, spec->target);
+      try {
+        segs.at(spec->target) = diagnose_current_exception();
+      } catch (...) {
+        terminate();
+      }
     }
 
     i = spec->next_this_index;
@@ -849,11 +924,12 @@ formatter::format_sub(size_t i, double val) noexcept
       if (spec->type == '\0')
         spec->type = 'g';
       do_format_float(val, *spec, segs.at(spec->target));
-
-    } catch (exception const& e) {
-      formatsub_threw(e.what(), spec->target);
     } catch (...) {
-      formatsub_threw(generic_exception_msg, spec->target);
+      try {
+        segs.at(spec->target) = diagnose_current_exception();
+      } catch (...) {
+        terminate();
+      }
     }
 
     i = spec->next_this_index;
@@ -879,11 +955,12 @@ formatter::format_sub(size_t i, const char *val) noexcept
       if (spec->type == '\0')
         spec->type = 's';
       do_format_cstr(val, *spec, segs.at(spec->target));
-
-    } catch (exception const& e) {
-      formatsub_threw(e.what(), spec->target);
     } catch (...) {
-      formatsub_threw(generic_exception_msg, spec->target);
+      try {
+        segs.at(spec->target) = diagnose_current_exception();
+      } catch (...) {
+        terminate();
+      }
     }
 
     i = spec->next_this_index;
@@ -908,10 +985,12 @@ formatter::format_sub(size_t i, const string &val) noexcept
         spec->type = 's';
       do_format_str(val, *spec, segs.at(spec->target));
 
-    } catch (exception const& e) {
-      formatsub_threw(e.what(), spec->target);
     } catch (...) {
-      formatsub_threw(generic_exception_msg, spec->target);
+      try {
+        segs.at(spec->target) = diagnose_current_exception();
+      } catch (...) {
+        terminate();
+      }
     }
 
     i = spec->next_this_index;
@@ -922,15 +1001,13 @@ formatter::format_sub(size_t i, const string &val) noexcept
 }
 
 void
-formatter::format_exc(size_t i, const char *what) noexcept
-{
-  format_sub(i, string(BEGIN_ERRMSG) + what + END_ERRMSG);
-}
-
-void
 formatter::format_exc(size_t i) noexcept
 {
-  format_sub(i, string(BEGIN_ERRMSG) + generic_exception_msg + END_ERRMSG);
+  try {
+    format_sub(i, diagnose_current_exception());
+  } catch (...) {
+    terminate();
+  }
 }
 
 // Public interface.
@@ -952,10 +1029,16 @@ formatter::formatter(size_t nargs_, const char *msg) noexcept
       format_sub(format_spec::i_errno, std::strerror(saved_errno));
     }
 
-  } catch (exception const& e) {
-    constructor_threw(e.what());
   } catch (...) {
-    constructor_threw(generic_exception_msg);
+    try {
+      nargs = 0;
+      first_errno_spec.reset();
+      specs.clear();
+      segs.resize(1);
+      segs[0] = diagnose_current_exception();
+    } catch (...) {
+      terminate();
+    }
   }
 }
 
@@ -965,10 +1048,12 @@ formatter::finish() noexcept
   try {
     return std::accumulate(segs.begin(), segs.end(), string(""));
 
-  } catch (exception const& e) {
-    return finish_threw(e.what());
   } catch (...) {
-    return finish_threw(generic_exception_msg);
+    try {
+      return diagnose_current_exception();
+    } catch (...) {
+      terminate();
+    }
   }
 }
 

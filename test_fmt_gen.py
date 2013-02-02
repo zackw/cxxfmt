@@ -407,7 +407,7 @@ def test_exceptions_in_conversion():
                     "}};\n")
     call_template = (
         "success &= process1_T(\"{label} {{}}\",\n"
-        "                      \"{label} \\x1b[7m{expect}\\x1b[27m\",\n"
+        "                      \"{label} \\x1b[7m[{expect}]\\x1b[27m\",\n"
         "                      {label}());\n")
 
     methods = [ { "where":  "op_string",
@@ -425,16 +425,16 @@ def test_exceptions_in_conversion():
 
     crockery = [ { "what":   "logic_error",
                    "obj":    "logic_error(\"{label}\")",
-                   "expect": "{label}" },
+                   "expect": "logic_error: {label}" },
                  { "what":   "exception",
                    "obj":    "exception()",
-                   "expect": "std::exception" },
+                   "expect": "generic exception" },
                  { "what":   "string",
                    "obj":    "\"{label}\"",
-                   "expect": "{label}" },
-                 { "what":   "unidentifiable",
+                   "expect": "text exception: {label}" },
+                 { "what":   "unusual",
                    "obj":    "42",
-                   "expect": "[exception of unknown type]" } ]
+                   "expect": "unusual exception type: int" } ]
 
     objects = []
     calls = []
@@ -774,7 +774,7 @@ def test_exceptions_internal():
     tick = "tick"
     boom = "boom"*(1156/4)
     ping = "ping"*(1156/10)
-    dent = "\x1b[7mstd::bad_alloc\x1b[27m"
+    dent = "\x1b[7m[out of memory]\x1b[27m"
 
     return [ ( boom, "", "", "", dent ),
 
