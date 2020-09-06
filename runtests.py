@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#! /usr/bin/python3
 
 # Copyright 2012, 2013 Zachary Weinberg <zackw@panix.com>.
 # Use, modification, and distribution are subject to the
@@ -15,7 +15,7 @@
 # Currently does not know how to invoke compilers that don't conform
 # to the Unix "cc" command line convention (most significantly, MSVC++)
 
-import ConfigParser
+import configparser
 import contextlib
 import errno
 import json
@@ -29,13 +29,21 @@ import tempfile
 # Utility functions
 #
 
+
 @contextlib.contextmanager
 def mkstemp_autodel(suffix="", prefix="tmp", dir=None, text=False,
                     contents=None):
     pathname = None
+    if contents is None:
+        contents = b""
+    elif isinstance(contents, str):
+        contents = contents.encode("utf-8")
+    else:
+        assert isinstance(contents, bytes)
+
     try:
         (handle, pathname) = tempfile.mkstemp(suffix, prefix, dir, text)
-        if contents is not None:
+        if contents:
             os.write(handle, contents)
         os.close(handle)
         yield pathname
@@ -43,9 +51,10 @@ def mkstemp_autodel(suffix="", prefix="tmp", dir=None, text=False,
         if pathname is not None:
             try:
                 os.unlink(pathname)
-            except OSError, e:
+            except OSError as e:
                 if e.errno != errno.ENOENT:
                     raise
+
 
 # credit to stackoverflow user 'Obtuse':
 # http://stackoverflow.com/a/6849299/388520
@@ -64,10 +73,11 @@ class lazy_property(object):
         value = self.__func__(obj)
         setattr(obj, self.__name__, value)
         return value
+
+
 #
 # Compiler invocation
 #
-
 class CompilerTraits(object):
     """Interface for traits classes that describe the peculiarities of
        a particular family of compilers."""
@@ -75,50 +85,58 @@ class CompilerTraits(object):
     def compile_cmd(self, src, obj):
         """Return an argument vector which will compile source file
            'src' into object file 'obj'."""
-        raise NotImplemented
+        raise NotImplementedError
 
     def link_cmd(self, objs, libs, exe):
         """Return an argument vector which will link object files OBJS
            and libraries LIBS to produce executable EXE."""
-        raise NotImplemented
+        raise NotImplementedError
 
     def version_cmd(self):
         """Return an argument vector which will cause the compiler to
            identify itself."""
-        raise NotImplemented
+        raise NotImplementedError
 
     def probe_flags(self):
         """Generate a sequence of possible additional command line
            arguments to try with this compiler.  Each list entry
            should be a 2-tuple whose first entry is additional 'flags'
            and whose second entry is additional 'libs'."""
-        raise NotImplemented
+        raise NotImplementedError
+
 
 class CT_Unix(CompilerTraits):
     """A compiler whose command line conforms to Unixy conventions."""
 
     def compile_cmd(self, src, obj):
-        return [ "-I.", "-O2", "-o", obj, "-c", src ]
+        return ["-I.", "-O2", "-o", obj, "-c", src]
 
     def link_cmd(self, objs, libs, exe):
-        return [ "-o", exe ] + objs + libs
+        return ["-o", exe] + objs + libs
 
     def version_cmd(self):
-        return [ "--version" ]
+        return ["--version"]
+
 
 class CT_Gcc(CT_Unix):
     """GNU Compiler Collection."""
     def probe_flags(self):
-        return [ ( [], [] ),
-                 ( ["-std=c++11"], [] ) ]
+        return [
+            ([], []),
+            (["-std=c++11"], [])
+        ]
+
 
 class CT_Clang(CT_Unix):
     """LLVM compilers."""
     def probe_flags(self):
-        return [ ( [], [] ),
-                 ( ["-std=c++11"], [] ),
-                 ( ["-stdlib=libc++"], [] ),
-                 ( ["-std=c++11", "-stdlib=libc++"], [] ) ]
+        return [
+            ([], []),
+            (["-std=c++11"], []),
+            (["-stdlib=libc++"], []),
+            (["-std=c++11", "-stdlib=libc++"], [])
+        ]
+
 
 class Compiler(object):
     """A particular compiler installed on this computer, which can be
@@ -140,12 +158,8 @@ class Compiler(object):
         self.flags = flags
         self.libs = libs
         self.traits = traits
-        for k, v in props.iteritems(): setattr(self, k, v)
-
-    def __cmp__(self, other):
-        return (cmp(self.tag, other.tag) or
-                cmp(self.prog, other.prog) or
-                cmp(id(self), id(other)))
+        for k, v in props.items():
+            setattr(self, k, v)
 
     def objname(self, src):
         """Return an appropriately labeled name for an object file
@@ -230,9 +244,21 @@ class Compiler(object):
     def save(self, cfg):
         """Stash everything we know about this compiler in a config file."""
         sect = self.tag
-        cfg.add_section(sect)
+        suffix = 0
+        while suffix < 99:
+            try:
+                cfg.add_section(sect)
+                break
+            except configparser.DuplicateSectionError:
+                pass
+            suffix += 1
+            sect = "{}-{}".format(self.tag, suffix)
+        else:
+            raise RuntimeError("could not find a section name for " + self.tag)
+
         for v in vars(self):
-            if v == 'tag': pass
+            if v == 'tag':
+                pass
             elif v == 'traits':
                 cfg.set(sect, v, getattr(self, v).__class__.__name__)
             elif v == 'flags' or v == 'libs':
@@ -247,7 +273,9 @@ class Compiler(object):
         flags = json.loads(cfg.get(sect, 'flags'))
         libs = json.loads(cfg.get(sect, 'libs'))
         traits = globals()[cfg.get(sect, 'traits')]()
-        props = { 'tag': sect }
+        props = {
+            'tag': sect
+        }
         for k, v in cfg.items(sect):
             if k != 'prog' and k != 'flags' and k != 'libs' and k != 'traits':
                 props[k] = v
@@ -256,19 +284,23 @@ class Compiler(object):
     @classmethod
     def load_compilers(cls, cfgfile):
         """Load all Compiler objects defined in config file CFGFILE."""
-        cfg = ConfigParser.RawConfigParser()
+        cfg = configparser.RawConfigParser()
         cfg.read(cfgfile)
-        return [ cls.load(cfg, sect) for sect in cfg.sections() ]
+        return [
+            cls.load(cfg, sect) for sect in cfg.sections()
+        ]
 
     @staticmethod
     def save_compilers(compilers, cfgfile):
         """Write all Compiler objects to config file CFGFILE."""
-        cfg = ConfigParser.RawConfigParser()
-        for cc in compilers: cc.save(cfg)
+        cfg = configparser.RawConfigParser()
+        for cc in compilers:
+            cc.save(cfg)
         cfg.write(open(cfgfile, "w"))
 
     _identify_source = None
     _identify_source_gen = None
+
     @classmethod
     def identify_source(cls):
         if cls._identify_source is None:
@@ -350,25 +382,29 @@ int main()
                 else:
                     cc_stderr = cls.DEVNULL
                     if verbose == 1:
-                        sys.stderr.write("probe " + " ".join(argv[:-3]) + "...")
+                        sys.stderr.write("probe " + " ".join(argv[:-3])
+                                         + "...")
                 subprocess.check_call(argv,
                                       stdin=cls.DEVNULL,
                                       stdout=cls.DEVNULL,
-                                      stderr=cc_stderr)
+                                      stderr=cc_stderr,
+                                      encoding="utf-8")
                 output = subprocess.check_output(exe)
                 fail = False
 
-            except subprocess.CalledProcessError, e:
+            except subprocess.CalledProcessError as e:
                 # Retry with appropriate switches for MSVC should go here.
                 # I am getting a headache just looking at its documentation,
                 # so it can wait.
                 if verbose >= 1:
                     if e.returncode < 0:
-                        sys.stderr.write("{} signal {}\n".format(e.cmd[0],
-                                                                 -e.returncode))
+                        sys.stderr.write("{} signal {}\n".format(
+                            e.cmd[0], -e.returncode
+                        ))
                     else:
-                        sys.stderr.write("{} exit {}\n".format(e.cmd[0],
-                                                               e.returncode))
+                        sys.stderr.write("{} exit {}\n".format(
+                            e.cmd[0], e.returncode
+                        ))
 
                 output = """{ "cxx11" : 0,
                               "cc"    : "unknown",
@@ -407,14 +443,18 @@ int main()
         traits class for the compiler named 'prog'."""
         try:
             output = subprocess.check_output([prog] + CT_Unix().version_cmd(),
-                                             stderr=cls.DEVNULL)
+                                             stderr=cls.DEVNULL,
+                                             encoding="utf-8")
         except subprocess.CalledProcessError:
             return None
 
         output = output.lower()
-        if "gcc" in output or "g++" in output: return CT_Gcc()
-        elif "clang" in output: return CT_Clang()
-        else: return None
+        if "gcc" in output or "g++" in output:
+            return CT_Gcc()
+        elif "clang" in output:
+            return CT_Clang()
+        else:
+            return None
 
     @classmethod
     def probe_compilers(cls, progs, verbose=0):
@@ -432,6 +472,7 @@ int main()
                     compilers.append(cls(prog, flags, libs, props, traits))
 
         return compilers
+
 
 def find_compilers(candidates, verbose):
     if len(candidates) == 0:
@@ -452,10 +493,10 @@ def find_compilers(candidates, verbose):
     Compiler.save_compilers(compilers, "compilers.ini")
     return compilers
 
+
 #
 # Test jobs and their interdependencies.
 #
-
 class Job(object):
     """Base class for test jobs.  A job is executed at most once, and
        execution either succeeds or fails.  Jobs depend on other jobs;
@@ -474,33 +515,39 @@ class Job(object):
        run() method to do something."""
 
     def __init__(self, verbose, deps, output=None):
-        self.deps    = deps
-        self.output  = output
+        self.deps = deps
+        self.output = output
         self.verbose = verbose
-        self.result  = None # not yet executed
-        self.mtime_  = None # not yet checked
+        self.result = None  # not yet executed
+        self.mtime_ = None  # not yet checked
 
     def update_mtime(self):
-        if self.output is None: return
+        if self.output is None:
+            return
         try:
             self.mtime_ = os.stat(self.output).st_mtime
-        except OSError, e:
+        except OSError as e:
             if e.errno != errno.ENOENT:
                 raise
-            self.mtime_ = 0 # doesn't exist = out of date
+            self.mtime_ = 0  # doesn't exist = out of date
 
     def mtime(self):
-        if self.output is None: return 0 # no output = always out of date
-        if self.mtime_ is None: self.update_mtime()
+        if self.output is None:
+            return 0  # no output = always out of date
+        if self.mtime_ is None:
+            self.update_mtime()
         return self.mtime_
 
     def uptodate(self):
         my_mtime = self.mtime()
-        if my_mtime == 0: return False # automatically out of date
+        if my_mtime == 0:
+            return False  # automatically out of date
 
         for dep in self.deps:
-            if not dep.uptodate(): return False
-            if my_mtime < dep.mtime(): return False
+            if not dep.uptodate():
+                return False
+            if my_mtime < dep.mtime():
+                return False
 
         return True
 
@@ -516,11 +563,13 @@ class Job(object):
                 self.result = dep_result
                 return dep_result
         self.result = self.run()
-        if self.result is True: self.update_mtime()
+        if self.result is True:
+            self.update_mtime()
         return self.result
 
     def run(self):
         return True  # success
+
 
 class FileDep(Job):
     """Pseudo-job to model a dependency on a file that is not created
@@ -535,16 +584,18 @@ class FileDep(Job):
                          .format(self.output))
         return False
 
+
 class CompileJob(Job):
     """Job to compile one source file with a specified compiler.
        Dependencies have no particular significance."""
     def __init__(self, verbose, deps, cc, src):
-        self.cc  = cc
+        self.cc = cc
         self.src = src
         Job.__init__(self, verbose, deps, output=cc.objname(src))
 
     def run(self):
         return self.cc.compile(self.src, self.verbose)
+
 
 class LinkJob(Job):
     """Job to link one or more object files with a specified compiler.
@@ -558,6 +609,7 @@ class LinkJob(Job):
 
     def run(self):
         return self.cc.link(self.objs, self.exebase, self.verbose)
+
 
 class RunJob(Job):
     """Job to run a program with arguments."""
@@ -589,6 +641,7 @@ class RunJob(Job):
                 sys.stderr.write("exit {}\n".format(rv))
         return False
 
+
 class TestJob(RunJob):
     """Job to run a test program, namely the program generated by the
        first LinkJob in the dependencies. 'args' can be used to specify
@@ -610,10 +663,10 @@ class TestJob(RunJob):
 
         RunJob.__init__(self, verbose, deps, [os.path.join(".", exe)] + args)
 
+
 #
 # In-tree main test driver.
 #
-
 def main():
     verbose = 1
     args = sys.argv[1:]
@@ -632,18 +685,25 @@ def main():
                      ["test_fmt_gen.py", "test_fmt.cc"],
                      output="test_fmt.cc")
     fmtccdep = FileDep("fmt.cc")
-    fmthdep  = FileDep("fmt.h")
+    fmthdep = FileDep("fmt.h")
 
-    cjobs = [ [ CompileJob(verbose, [testgen, fmthdep], cc, "test_fmt.cc"),
-                CompileJob(verbose, [fmtccdep, fmthdep], cc, "fmt.cc") ]
-              for cc in compilers ]
-    ljobs = [ LinkJob(verbose, objs, cc, "test_fmt")
-              for (objs, cc) in zip(cjobs, compilers) ]
-    tjobs = [ TestJob(verbose, [ljob], ["-q"])
-              for ljob in ljobs ]
+    cjobs = [
+        [CompileJob(verbose, [testgen, fmthdep], cc, "test_fmt.cc"),
+         CompileJob(verbose, [fmtccdep, fmthdep], cc, "fmt.cc")]
+        for cc in compilers
+    ]
+    ljobs = [
+        LinkJob(verbose, objs, cc, "test_fmt")
+        for (objs, cc) in zip(cjobs, compilers)
+    ]
+    tjobs = [
+        TestJob(verbose, [ljob], ["-q"])
+        for ljob in ljobs
+    ]
 
     all = Job(verbose, tjobs)
     all.execute()
+
 
 assert __name__ == '__main__'
 main()

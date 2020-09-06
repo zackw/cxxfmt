@@ -1,6 +1,6 @@
-#! /usr/bin/python
+#! /usr/bin/python3
 
-# Copyright 2012, 2013 Zachary Weinberg <zackw@panix.com>.
+# Copyright 2012, 2013, 2020 Zachary Weinberg <zackw@panix.com>.
 # Use, modification, and distribution are subject to the
 # Boost Software License, Version 1.0.  See the file LICENSE
 # or http://www.boost.org/LICENSE_1_0.txt for detailed terms.
@@ -11,6 +11,7 @@
 # self-explanatory.
 
 import curses.ascii
+import functools
 import itertools
 import json
 import math
@@ -18,24 +19,28 @@ import re
 import sys
 import textwrap
 
+
 def redent(text, indent):
     """Remove all common indentation from 'text' and then insert
        'indent' at the beginning of each line. 'indent' can be either
        a string, which is inserted as is, or a number, which is how
        many spaces to insert."""
-    if isinstance(indent, int) or isinstance(indent, long):
+    if isinstance(indent, int):
         indent = ' '*indent
-    return '\n'.join(indent+l for l in textwrap.dedent(text).split('\n'))
+    return '\n'.join(indent+line for line in textwrap.dedent(text).split('\n'))
 
-_tosymbol_re = re.compile(r"[^A-Za-z0-9_]+")
-def tosymbol(name):
+
+def tosymbol(name, _tosymbol_re=re.compile(r"[^A-Za-z0-9_]+")):
     """Make 'name' into a valid C++ symbol."""
-    if len(name) == 0: return name
+    if len(name) == 0:
+        return name
     name = _tosymbol_re.sub("_", name)
     if name[0] in "0123456789_":
         name = "N"+name
     return name
 
+
+@functools.total_ordering
 class TestCaseType(object):
     """POD structure containing all information required for one subtest."""
     allcasetypes = {}
@@ -49,13 +54,16 @@ class TestCaseType(object):
             raise RuntimeError("duplicate casetype name: " + self.name)
         self.allcasetypes[self.symbol] = self
 
-    def __cmp__(self, other):
-        return cmp(self.symbol, other.symbol)
+    def __eq__(self, other):
+        return self.symbol == other.symbol
+
+    def __lt__(self, other):
+        return self.symbol < other.symbol
 
     def write_case(self, outf, args):
         try:
             outf.write("  { " + self.caseprinter(*args) + " },\n")
-        except:
+        except Exception:
             sys.stderr.write("\n*** args: " + repr(args) + "\n")
             raise
 
@@ -66,6 +74,7 @@ class TestCaseType(object):
             outf.write("  {1} v{0};\n".format(*i_t))
         outf.write("};\n\n")
 
+
 class caseprint(object):
     """Decorator to facilitate creation of TestCaseTypes from
        case printer functions."""
@@ -74,15 +83,16 @@ class caseprint(object):
             self.vtypes = (vtypes,)
         else:
             self.vtypes = vtypes
+
     def __call__(self, fn):
         return TestCaseType(self.vtypes, fn)
+
 
 # Python string literals can be set off with single quotes, and repr()
 # prefers that form, so it usually doesn't produce a valid C string
 # literal.  But the JSON string literal syntax is the same as the C
 # string literal syntax, so we can use json.dumps() instead.
-
-@caseprint( () )
+@caseprint(())
 def case_a0(spec, output):
     # The spec may contain deliberate syntax errors marked with angle
     # brackets.  They are removed from 'spec', and replaced with VT220
@@ -95,6 +105,7 @@ def case_a0(spec, output):
                                                                  '\\x1b')
     return spec + ", " + output
 
+
 def case_a1(spec, override_spec, val, cval):
     if '{' not in spec:
         spec = '{:' + spec + '}'
@@ -103,17 +114,21 @@ def case_a1(spec, override_spec, val, cval):
     formatted = override_spec.format(val)
     return json.dumps(spec) + ", " + json.dumps(formatted) + ", " + cval
 
+
 @caseprint('const char*')
 def case_a1_cs(val, spec):
     return case_a1(spec, spec, val, json.dumps(val))
+
 
 @caseprint('int')
 def case_a1_is(val, spec):
     return case_a1(spec, spec, val, str(val))
 
+
 @caseprint('unsigned int')
 def case_a1_iu(val, spec):
     return case_a1(spec, spec, val, str(val))
+
 
 @caseprint('long long')
 def case_a1_lls(val, spec):
@@ -125,9 +140,11 @@ def case_a1_lls(val, spec):
         sval = str(val) + "LL"
     return case_a1(spec, spec, val, sval)
 
+
 @caseprint('unsigned long long')
 def case_a1_llu(val, spec):
     return case_a1(spec, spec, val, str(val)+"LLU")
+
 
 @caseprint('float')
 def case_a1_f(val, spec):
@@ -137,6 +154,7 @@ def case_a1_f(val, spec):
     if len(spec) == 0 or ('{' not in spec and spec[-1] not in "eEfFgG"):
         ospec += 'g'
     return case_a1(spec, ospec, val, str(val))
+
 
 @caseprint('char')
 def case_a1_c(val, spec):
@@ -155,7 +173,8 @@ def case_a1_c(val, spec):
     ospec = spec
     return case_a1(spec, ospec, val, cval)
 
-@caseprint( ("const char *", "const char *", "const char *") )
+
+@caseprint(("const char *", "const char *", "const char *"))
 def case_a3_s_s_s(spec, v1, v2, v3, exp=None):
     if exp is None:
         exp = spec.format(v1, v2, v3)
@@ -165,6 +184,8 @@ def case_a3_s_s_s(spec, v1, v2, v3, exp=None):
             json.dumps(v2) + ", " +
             json.dumps(v3))
 
+
+@functools.total_ordering
 class TestProcess1(object):
     """Generate a function to process a single subtest of a particular
        casetype."""
@@ -191,9 +212,11 @@ class TestProcess1(object):
                                .format(self.symbol))
         self.all_process1_fns[self.symbol] = self
 
-    def __cmp__(self, other):
-        return (cmp(self.casetype, other.casetype) or
-                cmp(self.symbol, other.symbol))
+    def __eq__(self, other):
+        return self.casetype == other.casetype and self.symbol == other.symbol
+
+    def __lt__(self, other):
+        return self.casetype < other.casetype or self.symbol < other.symbol
 
     def write_fn(self, outf):
         vs = ", ".join("v"+str(i) for i in range(len(self.casetype.vtypes)))
@@ -202,6 +225,8 @@ class TestProcess1(object):
                                         self.body,
                                         vs))
 
+
+@functools.total_ordering
 class TestProcess(object):
     """Generate a function to process an entire block of tests.
        This is used for test blocks that are too complicated to
@@ -228,7 +253,8 @@ class TestProcess(object):
 
     def __init__(self, name, args, targs, body):
         symbol = tosymbol(name)
-        if symbol != "": symbol = "_"+symbol
+        if symbol != "":
+            symbol = "_"+symbol
         if symbol in self.all_process_fns:
             raise RuntimeError("duplicate process1 symbol: \"{}\""
                                .format(self.symbol))
@@ -255,19 +281,29 @@ class TestProcess(object):
         self.targs = targs
         self.body = redent(body, 2)
 
+    def __eq__(self, other):
+        return self.symbol == other.symbol
+
+    def __lt__(self, other):
+        return self.symbol < other.symbol
+
     def write_fn(self, outf):
         outf.write(self.template.format(self.symbol, self.args, self.targs,
                                         self.body))
 
-process_generic = TestProcess("",
-                              ("const caseT (&cases)[n]",
-                               "bool (*process1)(const caseT&)"),
-                              ("typename caseT", "size_t n"),
-                              """\
+
+process_generic = TestProcess(
+    "",
+    ("const caseT (&cases)[n]", "bool (*process1)(const caseT&)"),
+    ("typename caseT", "size_t n"),
+    """\
   for (const caseT* c = cases; c < cases+n; c++)
     success &= process1(*c);
-""")
+"""
+)
 
+
+@functools.total_ordering
 class TestBlock(object):
     """One block of tests.  All tests in a block share the same
        'casetype' and 'process1'."""
@@ -288,10 +324,13 @@ class TestBlock(object):
         self.name = name
         self.blocksym = blocksym
 
-    def __cmp__(self, other):
-        # These are sorted strictly by name because that makes the verbose
-        # test-runner output look better.
-        return cmp(self.name, other.name)
+    # These are sorted strictly by name because that makes the verbose
+    # test-runner output look better.
+    def __eq__(self, other):
+        return self.name == other.name
+
+    def __lt__(self, other):
+        return self.name < other.name
 
     def write_cases(self, outf):
         pass
@@ -303,6 +342,7 @@ class TestBlock(object):
             p1sym = self.process1.symbol
         outf.write('  success &= process("{0}", tc_{1}, process1_{2});\n'
                    .format(self.name, self.blocksym, p1sym))
+
 
 class GenTB(TestBlock):
     """A block of tests generated from a generator function."""
@@ -329,6 +369,7 @@ class VarTB(TestBlock):
         TestBlock.__init__(self, depblock.name + " (" + process1.name + ")",
                            depblock.casetype, process1, depblock.blocksym)
 
+
 class SpecialTB(TestBlock):
     """A block of tests implemented using a custom 'process' function.
        You are responsible for setting up whatever infrastructure it needs."""
@@ -341,10 +382,12 @@ class SpecialTB(TestBlock):
         outf.write('  success &= process{1}("{0}");\n'
                    .format(self.name, self.processor.symbol))
 
+
 def testgen(casetype, name):
     """Decorator to facilitate creation of GenTBs from testcase
        generator functions."""
     return lambda fn: GenTB(name, casetype, fn)
+
 
 def special_testgen(name):
     """Decorator to facilitate creation of SpecialTBs from testcase
@@ -352,19 +395,20 @@ def special_testgen(name):
        the body of the custom process function as a string."""
     return lambda fn: SpecialTB(name, fn())
 
+
 @testgen(case_a0, "format-spec syntax errors")
 def test_syntax_errors():
-    return (x if isinstance(x, tuple) else (x,x) for x in [
+    return (x if isinstance(x, tuple) else (x, x) for x in [
         "no error",
-        ( "no error {{", "no error {" ),
-        ( "no error }}", "no error }" ),
-        ( "no error }}{{{{}}", "no error }{{}" ),
-        ( "absent argument <{}>", "absent argument <[missing]>" ),
-        ( "absent argument <{:}>", "absent argument <[missing]>" ),
+        ("no error {{", "no error {"),
+        ("no error }}", "no error }"),
+        ("no error }}{{{{}}", "no error }{{}"),
+        ("absent argument <{}>", "absent argument <[missing]>"),
+        ("absent argument <{:}>", "absent argument <[missing]>"),
         "unbalanced <{>",
         "unbalanced <}>",
-        ( "unbalanced {{<{>", "unbalanced {<{>" ),
-        ( "unbalanced }}<}>", "unbalanced }<}>" ),
+        ("unbalanced {{<{>", "unbalanced {<{>"),
+        ("unbalanced }}<}>", "unbalanced }<}>"),
         "unbalanced <{0>",
         "unbalanced <{:>",
         "unbalanced <{:=>",
@@ -400,6 +444,7 @@ def test_syntax_errors():
         "no plan to support <{0!b}>",
         ])
 
+
 @special_testgen("exceptions thrown by conversion methods")
 def test_exceptions_in_conversion():
     obj_template = ("struct {label} {{\n"
@@ -410,42 +455,68 @@ def test_exceptions_in_conversion():
         "                      \"{label} \\x1b[7m[{expect}]\\x1b[27m\",\n"
         "                      {label}());\n")
 
-    methods = [ { "where":  "op_string",
-                  "method": "operator string() const" },
-                { "where":  "str_sig1",
-                  "method": "const char* str() const" },
-                { "where":  "str_sig2",
-                  "method": "string str() const" },
-                { "where":  "str_sig3",
-                  "method": "const string& str() const" },
-                { "where":  "c_str",
-                  "method": "const char* c_str() const" },
-                { "where":  "what",
-                  "method": "const char* what() const" } ]
+    methods = [
+        {
+            "where":  "op_string",
+            "method": "operator string() const"
+        },
+        {
+            "where":  "str_sig1",
+            "method": "const char* str() const"
+        },
+        {
+            "where":  "str_sig2",
+            "method": "string str() const"
+        },
+        {
+            "where":  "str_sig3",
+            "method": "const string& str() const"
+        },
+        {
+            "where":  "c_str",
+            "method": "const char* c_str() const"
+        },
+        {
+            "where":  "what",
+            "method": "const char* what() const"
+        }
+    ]
 
-    crockery = [ { "what":   "logic_error",
-                   "obj":    "logic_error(\"{label}\")",
-                   "expect": "logic_error: {label}" },
-                 { "what":   "exception",
-                   "obj":    "exception()",
-                   "expect": "generic exception" },
-                 { "what":   "string",
-                   "obj":    "\"{label}\"",
-                   "expect": "text exception: {label}" },
-                 { "what":   "unusual",
-                   "obj":    "42",
-                   "expect": "unusual exception type: int" } ]
+    crockery = [
+        {
+            "what":   "logic_error",
+            "obj":    "logic_error(\"{label}\")",
+            "expect": "logic_error: {label}"
+        },
+        {
+            "what":   "exception",
+            "obj":    "exception()",
+            "expect": "generic exception"
+        },
+        {
+            "what":   "string",
+            "obj":    "\"{label}\"",
+            "expect": "text exception: {label}"
+        },
+        {
+            "what":   "unusual",
+            "obj":    "42",
+            "expect": "unusual exception type: int"
+        }
+    ]
 
     objects = []
     calls = []
 
     for m in methods:
         for c in crockery:
-            mc = { "where":  m['where'],
-                   "method": m['method'],
-                   "what":   c['what'],
-                   "obj":    c['obj'],
-                   "expect": c['expect'] }
+            mc = {
+                "where":  m['where'],
+                "method": m['method'],
+                "what":   c['what'],
+                "obj":    c['obj'],
+                "expect": c['expect']
+            }
             mc['label'] = "tf_{where}_{what}".format(**mc)
             mc['obj'] = mc['obj'].format(**mc)
             mc['expect'] = mc['expect'].format(**mc)
@@ -454,6 +525,7 @@ def test_exceptions_in_conversion():
             calls.append(call_template.format(**mc))
 
     return "".join(objects) + "\n" + "".join(calls)
+
 
 @special_testgen("formatting enums")
 def test_format_enum():
@@ -467,8 +539,9 @@ def test_format_enum():
   success &= process1_T("E {:#x}", "E 0x10001", e);
 """
 
+
 @special_testgen("formatting pointers")
-def test_format_enum():
+def test_format_pointers():
     return """\
   void *foo     = 0;
   struct T *bar = (struct T*)0x10001;
@@ -480,7 +553,8 @@ def test_format_enum():
   success &= process1_T("bar {0:#1o} {0:1d}", "bar 0o200001 65537", bar);
   // The default pointer formatting depends on the size of a pointer.
   static_assert(sizeof(void *)==4 ||
-                sizeof(void *)==8, "need specialization for your pointer size");
+                sizeof(void *)==8,
+                "need specialization for your pointer size");
   if (sizeof(void *) == 4) {
     success &= process1_T("foo {}", "foo 00000000", foo);
     success &= process1_T("bar {}", "bar 00010001", bar);
@@ -490,6 +564,7 @@ def test_format_enum():
   }
 """
 
+
 @special_testgen("printing strerror(errno)")
 def test_errno():
     call_template = (
@@ -498,29 +573,34 @@ def test_errno():
         "                  format(\"{2}\", 42, strerror({0})).c_str(), 42);\n")
 
     # these errno constants should exist everywhere
-    errnos = [ "EACCES", "ENOENT", "EINVAL", "EEXIST" ]
+    errnos = [
+        "EACCES", "ENOENT", "EINVAL", "EEXIST"
+    ]
 
-    formats = [ ("{m}",          "{1}"),
-                ("{m:<50}",      "{1:<50}"),
-                ("{0} {m}",      "{0} {1}"),
-                ("{m} {0}",      "{1} {0}"),
-                ("{m} {0} {m}",  "{1} {0} {1}"),
-                ("{0} {m} {0}",  "{0} {1} {0}"),
-                ("{m}{0}{m}{0}", "{1}{0}{1}{0}"),
-                ("{m}{m}{0}{0}", "{1}{1}{0}{0}") ]
+    formats = [
+        ("{m}",          "{1}"),
+        ("{m:<50}",      "{1:<50}"),
+        ("{0} {m}",      "{0} {1}"),
+        ("{m} {0}",      "{1} {0}"),
+        ("{m} {0} {m}",  "{1} {0} {1}"),
+        ("{0} {m} {0}",  "{0} {1} {0}"),
+        ("{m}{0}{m}{0}", "{1}{0}{1}{0}"),
+        ("{m}{m}{0}{0}", "{1}{1}{0}{0}")
+    ]
 
     return "\n".join(call_template.format(e, f[0], f[1])
                      for e in errnos
                      for f in formats)
 
+
 @testgen(case_a1_cs, "formatting strings")
 def test_str():
 
-    words = [ '', 'i', 'of', 'sis', 'fice', 'drisk', 'elanet', 'hippian',
-              'botanist', 'synaptene', 'cipherhood', 'schizognath' ]
-
-    aligns = [ '', '<', '>', '^', 'L<', 'R>', 'C^' ]
-
+    words = [
+        '', 'i', 'of', 'sis', 'fice', 'drisk', 'elanet', 'hippian',
+        'botanist', 'synaptene', 'cipherhood', 'schizognath'
+    ]
+    aligns = ['', '<', '>', '^', 'L<', 'R>', 'C^']
     maxw = len(words) + 3
 
     for r in words:
@@ -528,15 +608,16 @@ def test_str():
             yield (r, a)
             yield (r, a+'s')
 
-            for w in xrange(1, maxw, 3):
+            for w in range(1, maxw, 3):
                 yield (r, '{}{}'.format(a, w))
 
-            for p in xrange(0, maxw, 3):
+            for p in range(0, maxw, 3):
                 yield (r, '{}.{}'.format(a, p))
 
-            for w in xrange(1, maxw, 3):
-                for p in xrange(0, maxw, 3):
+            for w in range(1, maxw, 3):
+                for p in range(0, maxw, 3):
                     yield (r, '{}{}.{}'.format(a, w, p))
+
 
 process1_str_stdstr = TestProcess1(case_a1_cs,
                                    "std::string",
@@ -555,9 +636,9 @@ test_str_csconv = VarTB(test_str, TestProcess1(case_a1_cs,
                             operator const char* () const { return s; }
                           };
                           ts v0(c.v0);"""))
-test_str_csstr  = VarTB(test_str, TestProcess1(case_a1_cs,
-                                               "str() method (char *)",
-                                               """\
+test_str_csstr = VarTB(test_str, TestProcess1(case_a1_cs,
+                                              "str() method (char *)",
+                                              """\
                           struct ts {
                             const char* s;
                             ts(const char *s_) : s(s_) {}
@@ -582,9 +663,9 @@ test_str_ssconv = VarTB(test_str, TestProcess1(case_a1_cs,
                             operator string() const { return string(s); }
                           };
                           ts v0(c.v0);"""))
-test_str_ssstr  = VarTB(test_str, TestProcess1(case_a1_cs,
-                                               "str() method (std::string)",
-                                               """\
+test_str_ssstr = VarTB(test_str, TestProcess1(case_a1_cs,
+                                              "str() method (std::string)",
+                                              """\
                           struct ts {
                             const char *s;
                             ts(const char *s_) : s(s_) {}
@@ -592,19 +673,21 @@ test_str_ssstr  = VarTB(test_str, TestProcess1(case_a1_cs,
                           };
                           ts v0(c.v0);"""))
 
+
 @testgen(case_a1_c, "formatting chars")
 def test_char():
-    chars  = "a!'0\t"
-    types  = [ '', 'c', 's', 'd', 'o', 'x', 'X' ]
-    aligns = [ '', '<', '>', '^', 'L<', 'R>', 'C^' ]
-    widths = [ '', '1', '3', '4' ]
-    precs  = [ '', '.0', '.1', '.3', '.4' ]
+    chars = "a!'0\t"
+    types = ['', 'c', 's', 'd', 'o', 'x', 'X']
+    aligns = ['', '<', '>', '^', 'L<', 'R>', 'C^']
+    widths = ['', '1', '3', '4']
+    precs = ['', '.0', '.1', '.3', '.4']
 
     for (r, t, a, w, p) in itertools.product(chars, types, aligns,
                                              widths, precs):
         if (t != '' and t != 's') and p != '':
-            continue # integer formatting doesn't allow precision
+            continue  # integer formatting doesn't allow precision
         yield (r, a+w+p+t)
+
 
 test_char_uchar = VarTB(test_char, TestProcess1(case_a1_c,
                                                 "unsigned",
@@ -612,6 +695,7 @@ test_char_uchar = VarTB(test_char, TestProcess1(case_a1_c,
 test_char_schar = VarTB(test_char, TestProcess1(case_a1_c,
                                                 "signed",
                                                 "signed char v0 = c.v0;"))
+
 
 # Helpers for the next several tests.  We want to test only a few
 # numbers, because there are so many modifier combinations to work
@@ -625,109 +709,122 @@ test_char_schar = VarTB(test_char, TestProcess1(case_a1_c,
 # print the shortest decimal number that rounds to the IEEE double it
 # began with (as modified by the format spec); your C++ library probably
 # does not make the same guarantee.
-
 def integer_test_cases(limit, any_negative):
-    numbers = [ 1, 128, 256, 32768, 65536, 2**31, 2**32, 2**63, 2**64 ]
+    numbers = [
+        1, 128, 256, 32768, 65536, 2**31, 2**32, 2**63, 2**64
+    ]
     # The square brackets on the next line prevent an infinite loop.
     numbers.extend([i-1 for i in numbers])
 
     if any_negative:
         numbers.extend([-i for i in numbers])
-        numbers = [i for i in numbers if -(limit/2) <= i <= limit/2 - 1]
+        numbers = [i for i in numbers if -(limit//2) <= i <= limit//2 - 1]
     else:
         numbers = [i for i in numbers if i <= limit - 1]
 
     # remove duplicates and sort into order 0, 1, -1, ...
     numbers = sorted(set(numbers),
-                     key=lambda x: (abs(x), 0 if x>=0 else 1))
+                     key=lambda x: (abs(x), 0 if x >= 0 else 1))
     return numbers
 
-def float_test_cases():
-        numbers = [ 0.0, 1.0, 2.0, 0.5,
-                    2**19, 2**20,   # bracket {:g} switch to exponential
-                    2**-13, 2**-14, # same
-                  ]
-        numbers.extend([i+1 for i in numbers])
-        numbers.extend([-i for i in numbers])
 
-        return sorted(set(numbers),
-                      key=lambda x: (abs(math.frexp(x)[1]),
-                                     abs(x),
-                                     0 if x>=0 else 1))
+def float_test_cases():
+    numbers = [
+        0.0, 1.0, 2.0, 0.5,
+        2**19, 2**20,    # bracket {:g} switch to exponential
+        2**-13, 2**-14,  # same
+    ]
+    numbers.extend([i+1 for i in numbers])
+    numbers.extend([-i for i in numbers])
+
+    return sorted(set(numbers),
+                  key=lambda x: (abs(math.frexp(x)[1]),
+                                 abs(x),
+                                 0 if x >= 0 else 1))
+
 
 @testgen(case_a1_is, "formatting signed ints")
 def test_int_signed():
-
     numbers = integer_test_cases(2**32, True)
-    aligns  = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
-    types   = [ '', 'd', 'o', 'x', 'X', 'g' ]
-    signs   = [ '', '+', '-', ' ' ]
-    mods    = [ '', '0', '#', '#0' ]
-    widths  = [ '', '6', '12' ]
+    aligns = ['', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=']
+    types = ['', 'd', 'o', 'x', 'X', 'g']
+    signs = ['', '+', '-', ' ']
+    mods = ['', '0', '#', '#0']
+    widths = ['', '6', '12']
 
-    for (n,a,s,m,w,t) in itertools.product(numbers, aligns, signs,
-                                           mods, widths, types):
+    for (n, a, s, m, w, t) in itertools.product(
+            numbers, aligns, signs, mods, widths, types
+    ):
         # Skip '0' modifier with explicit alignment.
         # Python allows this combination, fmt.cc doesn't.
         # Also skip '#' with 'g', which is not allowed by either.
-        if ((a == '' or '0' not in m) and
-            (t != 'g' or '#' not in m)):
+        if (
+                (a == '' or '0' not in m)
+                and (t != 'g' or '#' not in m)
+        ):
             yield (n, a+s+m+w+t)
+
 
 @testgen(case_a1_iu, "formatting unsigned ints")
 def test_int_unsigned():
-
     numbers = integer_test_cases(2**32, False)
-    aligns  = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
-    types   = [ '', 'd', 'o', 'x', 'X', 'g' ]
-    signs   = [ '', '+', '-', ' ' ]
-    mods    = [ '', '0', '#', '#0' ]
-    widths  = [ '', '6', '12' ]
+    aligns = ['', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=']
+    types = ['', 'd', 'o', 'x', 'X', 'g']
+    signs = ['', '+', '-', ' ']
+    mods = ['', '0', '#', '#0']
+    widths = ['', '6', '12']
 
-    for (n,a,s,m,w,t) in itertools.product(numbers, aligns, signs,
-                                           mods, widths, types):
+    for (n, a, s, m, w, t) in itertools.product(
+            numbers, aligns, signs, mods, widths, types
+    ):
         # Skip '0' modifier with explicit alignment.
         # Python allows this combination, fmt.cc doesn't.
         # Also skip '#' with 'g', which is not allowed by either.
-        if ((a == '' or '0' not in m) and
-            (t != 'g' or '#' not in m)):
+        if (
+                (a == '' or '0' not in m)
+                and (t != 'g' or '#' not in m)
+        ):
             yield (n, a+s+m+w+t)
+
 
 # Test very large numbers with a reduced set of format modifiers.
 @testgen(case_a1_lls, "formatting signed long longs")
 def test_long_signed():
     numbers = integer_test_cases(2**64, True)
-    types   = [ '', 'd', 'o', 'x', 'X' ]
-    signs   = [ '', '+', '-', ' ' ]
-    mods    = [ '', '0', '#', '#0' ]
-    for (n,t,s,m) in itertools.product(numbers, types, signs, mods):
+    types = ['', 'd', 'o', 'x', 'X']
+    signs = ['', '+', '-', ' ']
+    mods = ['', '0', '#', '#0']
+    for (n, t, s, m) in itertools.product(numbers, types, signs, mods):
         yield (n, s+m+t)
+
 
 @testgen(case_a1_llu, "formatting unsigned long longs")
 def test_long_unsigned():
     numbers = integer_test_cases(2**64, False)
-    types   = [ '', 'd', 'o', 'x', 'X' ]
-    signs   = [ '', '+', '-', ' ' ]
-    mods    = [ '', '0', '#', '#0' ]
-    for (n,t,s,m) in itertools.product(numbers, types, signs, mods):
+    types = ['', 'd', 'o', 'x', 'X']
+    signs = ['', '+', '-', ' ']
+    mods = ['', '0', '#', '#0']
+    for (n, t, s, m) in itertools.product(numbers, types, signs, mods):
         yield (n, s+m+t)
+
 
 @testgen(case_a1_f, "formatting floats")
 def test_float():
-
     numbers = float_test_cases()
-    aligns  = [ '', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=' ]
-    types   = [ '', 'e', 'f', 'g', 'E', 'F', 'G' ]
-    signs   = [ '', '+', '-', ' ' ]
-    mods    = [ '', '0' ]
-    wnp     = [ '', '6', '12', '.6', '12.6' ]
+    aligns = ['', '<', '>', '^', '=', 'L<', 'R>', 'C^', 'E=']
+    types = ['', 'e', 'f', 'g', 'E', 'F', 'G']
+    signs = ['', '+', '-', ' ']
+    mods = ['', '0']
+    wnp = ['', '6', '12', '.6', '12.6']
 
-    for (n,a,s,m,w,t) in itertools.product(numbers, aligns, signs,
-                                           mods, wnp, types):
+    for (n, a, s, m, w, t) in itertools.product(
+            numbers, aligns, signs, mods, wnp, types
+    ):
         # Skip '0' modifier with explicit alignment.
         # Python allows this combination, fmt.cc doesn't.
         if a == '' or '0' not in m:
             yield (n, a+s+m+w+t)
+
 
 # We don't attempt to test values not representable in single
 # precision, for fear of hitting variance between floating-point
@@ -736,32 +833,39 @@ test_float_dbl = VarTB(test_float, TestProcess1(case_a1_f,
                                                 "double",
                                                 "double v0 = c.v0;"))
 
+
 @testgen(case_a1_f, "multiple specs one argument (float)")
 def test_2s1a_float():
     for n in float_test_cases():
         yield (n, "{0:12.6e} {0:<+4f} {0:.6g}")
+
 
 @testgen(case_a1_is, "multiple specs one argument (signed int)")
 def test_2s1a_sint():
     for n in integer_test_cases(2**8, True):
         yield (n, "{0:d} {0:o} {0:x}")
 
+
 @testgen(case_a1_iu, "multiple specs one argument (unsigned int)")
 def test_2s1a_uint():
     for n in integer_test_cases(2**8, False):
         yield (n, "{0:d} {0:o} {0:x}")
+
 
 @testgen(case_a1_c, "multiple specs one argument (char)")
 def test_2s1a_char():
     for c in "a!'0\t":
         yield (c, "{0:c} {0:o}")
 
+
 @testgen(case_a1_cs, "multiple specs one argument (str)")
 def test_2s1a_str():
-    for c in [ "", "i", "of", "sis", "fice", "drisk" ]:
+    for c in ["", "i", "of", "sis", "fice", "drisk"]:
         yield (c, "{0:s} {0:<5} {0:>10s} {0:^15}")
 
+
 test_2s1a_stdstr = VarTB(test_2s1a_str, process1_str_stdstr)
+
 
 @testgen(case_a3_s_s_s, "exceptions thrown internally")
 def test_exceptions_internal():
@@ -772,38 +876,39 @@ def test_exceptions_internal():
     # to make it interesting we require more than one substitution
     # slot.
     tick = "tick"
-    boom = "boom"*(1156/4)
-    ping = "ping"*(1156/10)
+    boom = "boom" * (1156 // 4)
+    ping = "ping" * (1156 // 10)
     dent = "\x1b[7m[out of memory]\x1b[27m"
 
-    return [ ( boom, "", "", "", dent ),
+    return [
+        (boom, "", "", "", dent),
 
-             ( "{} {} {}", tick, tick, tick, tick+" "+tick+" "+tick ),
+        ("{} {} {}", tick, tick, tick, tick+" "+tick+" "+tick),
 
-             ( "{} {} {}", boom, tick, tick, dent+" "+tick+" "+tick ),
-             ( "{} {} {}", tick, boom, tick, tick+" "+dent+" "+tick ),
-             ( "{} {} {}", tick, tick, boom, tick+" "+tick+" "+dent ),
+        ("{} {} {}", boom, tick, tick, dent+" "+tick+" "+tick),
+        ("{} {} {}", tick, boom, tick, tick+" "+dent+" "+tick),
+        ("{} {} {}", tick, tick, boom, tick+" "+tick+" "+dent),
 
-             ( "{} {} {}", tick, boom, boom, tick+" "+dent+" "+dent ),
-             ( "{} {} {}", boom, tick, boom, dent+" "+tick+" "+dent ),
-             ( "{} {} {}", boom, boom, tick, dent+" "+dent+" "+tick ),
+        ("{} {} {}", tick, boom, boom, tick+" "+dent+" "+dent),
+        ("{} {} {}", boom, tick, boom, dent+" "+tick+" "+dent),
+        ("{} {} {}", boom, boom, tick, dent+" "+dent+" "+tick),
 
-             ( "{} {} {}", boom, boom, boom, dent+" "+dent+" "+dent ),
+        ("{} {} {}", boom, boom, boom, dent+" "+dent+" "+dent),
 
-             ( "{} {} {}", ping, tick, tick, ping+" "+tick+" "+tick ),
-             ( "{} {} {}", tick, ping, tick, tick+" "+ping+" "+tick ),
-             ( "{} {} {}", tick, tick, ping, tick+" "+tick+" "+ping ),
+        ("{} {} {}", ping, tick, tick, ping+" "+tick+" "+tick),
+        ("{} {} {}", tick, ping, tick, tick+" "+ping+" "+tick),
+        ("{} {} {}", tick, tick, ping, tick+" "+tick+" "+ping),
 
-             # two pings one tick may or may not throw an exception
-             # depending on allocator behavior, so we don't try it
+        # two pings one tick may or may not throw an exception
+        # depending on allocator behavior, so we don't try it
 
-             ( "{} {} {}", ping, ping, ping, dent ),
-           ]
+        ("{} {} {}", ping, ping, ping, dent),
+    ]
 
 
 skeleton_0 = r"""// Tester for cxxfmt.
 
-// Copyright 2012, 2013 Zachary Weinberg <zackw@panix.com>.
+// Copyright 2012, 2013, 2020 Zachary Weinberg <zackw@panix.com>.
 // Use, modification, and distribution are subject to the
 // Boost Software License, Version 1.0.  See the file LICENSE
 // or http://www.boost.org/LICENSE_1_0.txt for detailed terms.
@@ -838,7 +943,12 @@ operator new(size_t n)
   return v;
 }
 void
-operator delete(void *p)
+operator delete(void *p) noexcept
+{
+  std::free(p);
+}
+void
+operator delete(void *p, size_t) noexcept
 {
   std::free(p);
 }
@@ -952,6 +1062,7 @@ skeleton_3 = r"""
 }
 """
 
+
 def main():
     if len(sys.argv) > 1:
         outf = open(sys.argv[1], "w")
@@ -961,27 +1072,30 @@ def main():
     with outf:
         outf.write(skeleton_0)
 
-        casets = TestCaseType.allcasetypes.values()
-        casets.sort()
-        for ct in casets: ct.write_decl(outf)
+        casets = sorted(TestCaseType.allcasetypes.values())
+        for ct in casets:
+            ct.write_decl(outf)
 
-        blocks = TestBlock.allblocks.values()
-        blocks.sort()
-        for b in blocks: b.write_cases(outf)
+        blocks = sorted(TestBlock.allblocks.values())
+        for b in blocks:
+            b.write_cases(outf)
 
         outf.write(skeleton_1)
 
-        p1s = TestProcess1.all_process1_fns.values()
-        p1s.sort()
-        for p in p1s: p.write_fn(outf)
+        p1s = sorted(TestProcess1.all_process1_fns.values())
+        for p in p1s:
+            p.write_fn(outf)
 
-        ps = TestProcess.all_process_fns.values()
-        ps.sort()
-        for p in ps: p.write_fn(outf)
+        ps = sorted(TestProcess.all_process_fns.values())
+        for p in ps:
+            p.write_fn(outf)
 
         outf.write(skeleton_2)
-        for b in blocks: b.write_process_call(outf)
+        for b in blocks:
+            b.write_process_call(outf)
+
         outf.write(skeleton_3)
+
 
 assert __name__ == '__main__'
 main()
